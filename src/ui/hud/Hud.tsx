@@ -3,6 +3,8 @@ import type { UiSnapshot } from '../../game/Game';
 import { Bar, Panel, Txt } from '../components/primitives';
 import { useGameUi, useServices } from '../GameContext';
 import { COLORS, hex } from '../theme';
+import { FocusOverlay, StatusChips } from './FocusOverlay';
+import { TechniqueBanner } from './TechniqueBanner';
 
 function MoneyLine({ ui }: { ui: UiSnapshot }) {
   return (
@@ -30,6 +32,8 @@ function PartyPanel({ ui, withMoney }: { ui: UiSnapshot; withMoney?: boolean }) 
           <Bar value={p.hp} max={p.maxHp} color={p.hp / p.maxHp < 0.3 ? COLORS.hpLow : COLORS.hp} height={7} />
           <View style={{ height: 2 }} />
           <Bar value={p.ki} max={p.maxKi} color={COLORS.ki} height={5} />
+          <View style={{ height: 2 }} />
+          <Bar value={p.rage} max={100} color={p.rage >= 100 ? COLORS.gold : COLORS.rage} height={3} />
           {p.isLeader && (
             <>
               <View style={{ height: 2 }} />
@@ -109,6 +113,12 @@ function CombatantRow({ c, align }: { c: UiSnapshot['combatants'][number]; align
       <Bar value={c.hp} max={c.maxHp} color={c.hp / c.maxHp < 0.3 ? COLORS.hpLow : COLORS.hp} height={7} width={140} />
       <View style={{ height: 2 }} />
       <Bar value={c.ki} max={c.maxKi} color={COLORS.ki} height={4} width={140} />
+      {c.team === 'player' && (
+        <>
+          <View style={{ height: 2 }} />
+          <Bar value={c.rage} max={100} color={c.rage >= 100 ? COLORS.gold : COLORS.rage} height={3} width={140} />
+        </>
+      )}
     </View>
   );
 }
@@ -142,27 +152,22 @@ function CombatHud({ ui }: { ui: UiSnapshot }) {
           </Txt>
         </View>
       )}
-      {ui.specialReady && (
+      {ui.specialReady && !ui.focus.active && (
         <View style={styles.special}>
-          <Txt size={22} title color={COLORS.gold}>
-            ¡METEO! [F]
+          <Txt size={18} title color={COLORS.gold}>
+            ¡LÍMITE LISTO!
           </Txt>
         </View>
       )}
       {!touchUi && (
-        <Panel style={styles.moves}>
-          {ui.controlledMoves.map((m) => (
-            <Txt key={m.id} size={15} color={m.cooldown > 0 || !m.affordable ? COLORS.dim : COLORS.text}>
-              {m.name}
-              {m.kiCost > 0 ? ` (${m.kiCost} Ki)` : ''}
-              {m.cooldown > 0 ? ` ${Math.ceil(m.cooldown / 60)}s` : ''}
-            </Txt>
-          ))}
+        <View style={styles.helpLine}>
           <Txt size={14} color={COLORS.dim}>
-            WASD mover · Espacio/Ctrl altura · Shift dash · U defensa · I cargar · R objetivo · Tab aliado · Q/E cámara
+            WASD mover · J/K/L atacar · U defensa · I cargar · Shift dash · F concentración · 1-4 técnicas · G límite · R objetivo · Tab aliado
           </Txt>
-        </Panel>
+        </View>
       )}
+      <StatusChips ui={ui} />
+      <FocusOverlay ui={ui} />
     </View>
   );
 }
@@ -196,7 +201,7 @@ function ExplorationHud({ ui }: { ui: UiSnapshot }) {
       {!touchUi && (
         <View style={styles.helpLine}>
           <Txt size={14} color={COLORS.dim}>
-            WASD mover · Shift correr · Espacio saltar · J interactuar · L Ki · Tab líder · Esc menú · ` debug
+            WASD mover · Shift correr · Espacio saltar · J interactuar · L disparo de ki · I cargar · 1-4 técnicas · Tab líder · Esc menú
           </Txt>
         </View>
       )}
@@ -206,6 +211,8 @@ function ExplorationHud({ ui }: { ui: UiSnapshot }) {
 
 function Toasts({ ui }: { ui: UiSnapshot }) {
   const color = { info: COLORS.text, good: COLORS.good, warn: COLORS.warn, quest: COLORS.quest } as const;
+  // The focus panel owns the top of the screen during its 3 s window.
+  if (ui.focus.active) return null;
   return (
     <View style={styles.toasts} pointerEvents="none">
       {ui.toasts.slice(-4).map((t) => (
@@ -223,7 +230,7 @@ function DialogueBox({ ui }: { ui: UiSnapshot }) {
   const { game } = useServices();
   if (!ui.dialogue) return null;
   return (
-    <View style={styles.dialogue} onTouchEnd={() => game.input.pulse('light')}>
+    <View style={styles.dialogue} onTouchEnd={() => game.input.tap('light')}>
       <Panel style={{ borderColor: COLORS.border }}>
         <Txt size={18} color={COLORS.gold}>
           {ui.dialogue.speaker}
@@ -290,6 +297,7 @@ export function Hud() {
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {combat ? <CombatHud ui={ui} /> : <ExplorationHud ui={ui} />}
       <Toasts ui={ui} />
+      <TechniqueBanner />
       <Rewards ui={ui} />
       <DialogueBox ui={ui} />
       <SaveIndicator ui={ui} />

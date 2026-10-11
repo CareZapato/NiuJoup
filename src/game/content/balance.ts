@@ -30,15 +30,10 @@ export const BALANCE = {
     verticalSpeed: 5,
     dashSpeed: 17,
     dashTicks: 12,
-    dashKiCost: 4,
-    teleportKiCost: 12,
-    teleportDistance: 4,
     guardDamageMultiplier: 0.2,
     guardKiDrainPerHit: 4,
     parryWindowTicks: 7,
     parryStunTicks: 40,
-    kiChargePerSecond: 28,
-    kiRegenPerSecond: 2,
     minComboScaling: 0.35,
     critMultiplier: 1.5,
     knockbackFriction: 4,
@@ -50,6 +45,73 @@ export const BALANCE = {
     meteoTicks: 110,
     meteoDamageMultiplier: 3.2,
     meteoDefendReduction: 0.5,
+    /** Stun-lock breaker: ticks of near-continuous hit reactions before armor kicks in. */
+    stunLockMaxTicks: 150,
+    /** Armor window: hits still deal damage but do not stun or interrupt. */
+    stunLockArmorTicks: 60,
+    /** Chain decay per free tick. */
+    stunLockDecayPerTick: 3,
+  },
+  /** One ki system shared by exploration and combat. Rates use simulation seconds. */
+  ki: {
+    baseMax: 100,
+    /** Hold-to-charge: immobile, no attack/guard, interrupted by damage. */
+    chargePerSecond: 12,
+    /** Passive regen only refills up to this fraction of max ki. */
+    regenPerSecond: 1,
+    regenCapFraction: 0.3,
+    /** Ki after waking up at the checkpoint (defeat is not a free refill). */
+    afterDefeatFraction: 0.3,
+    costs: {
+      kiBlast: 3,
+      melee: 0,
+      dash: 4,
+      kamehameha: 30,
+      kaioken: 15,
+      teleport: 15,
+      kienzan: 25,
+      taiyoken: 20,
+      kakusandan: 28,
+      sokidan: 30,
+      rogafufuken: 10,
+      limit: 0,
+    },
+    worldBlastCooldownTicks: 30,
+  },
+  /** Focus combos: real-time window, world in slow motion. */
+  focus: {
+    timeScale: 0.2,
+    windowSeconds: 3,
+    cooldownTicks: 60 * 8,
+    /** Small explicit ki penalty on a failed sequence (never negative, never double). */
+    failKiPenalty: 5,
+    /** Fraction of rage lost when a limit sequence fails. */
+    failRageFraction: 0.5,
+    confusedTicks: 90,
+    confusedDamageTaken: 1.25,
+    /** Stick magnitude to register / release a direction symbol. */
+    stickOn: 0.6,
+    stickOff: 0.3,
+    /** World filter while focused (0..1). Ramp uses real seconds. */
+    desaturate: 0.85,
+    darken: 0.22,
+    filterRampSeconds: 0.12,
+  },
+  /** AI allies: named techniques are paced (limits are exempt). */
+  ai: {
+    /** No ally slot technique during the first seconds of an encounter. */
+    allyTechniqueOpeningTicks: 150,
+    /** Minimum gap between two slot techniques from the same ally. */
+    allyTechniqueIntervalTicks: 300,
+  },
+  rage: {
+    max: 100,
+    /** Rage per point of damage received from enemies, relative to max HP. */
+    perDamageFraction: 110,
+    blockedFactor: 0.5,
+    /** Smaller contribution from active combat. */
+    perHitLanded: 0.6,
+    dominancePerSecond: 1.5,
   },
   exploration: {
     walkSpeed: 4.2,
@@ -85,7 +147,43 @@ export const BALANCE = {
   },
   save: {
     debounceMs: 800,
-    schemaVersion: 2,
+    schemaVersion: 3,
+  },
+  /**
+   * Camera framing. `zoomOut` multiplies every gameplay distance (1.15 = 15 %
+   * farther than the original framing); the encounter zoom-in is preserved
+   * because exploration and combat distances scale together.
+   */
+  camera: {
+    zoomOut: 1.15,
+    exploration: { distance: 15, pitch: 1.02, fov: 40 },
+    combat: { base: 6.5, perSpread: 0.85, min: 7, max: 17, pitch: 0.34, fov: 50 },
+    /** Extra world units visible past the playable edge before the camera stops. */
+    edgeMargin: 1.5,
+  },
+  /**
+   * Resolution model: the layout is authored against a 1920x1080 reference;
+   * the GL canvas renders at an internal resolution chosen per device (never
+   * forced to 1080p on phones), sprites keep their own texel size, and the
+   * camera zoom is independent of all three.
+   */
+  render: {
+    referenceWidth: 1920,
+    referenceHeight: 1080,
+    /** Max device-pixel ratio for the GL canvas per quality level. */
+    maxDprHigh: 2,
+    maxDprLow: 1,
+    /** Cap on internal render height in pixels (phones with 3x screens stay cheap). */
+    maxInternalHeight: 1080,
+    minInternalHeight: 540,
+    /** Adaptive resolution: drop DPR by `downStep` when the 2 s average falls under `downFps`; recover above `upFps`. */
+    downFps: 45,
+    upFps: 57,
+    downStep: 0.85,
+    upStep: 1.08,
+    sampleSeconds: 2,
+    /** Trees closer than (bottom-of-screen ground distance + this) along the view are cut away. */
+    treeCutaway: 2.5,
   },
   effects: {
     maxParticlesMobile: 120,

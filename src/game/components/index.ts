@@ -38,7 +38,20 @@ export type AnimId =
   | 'kiblast'
   | 'special'
   | 'defeat'
-  | 'victory';
+  | 'victory'
+  | 'idle_wait'
+  | 'stance'
+  | 'pickup'
+  | 'dodge'
+  | 'confused'
+  | 'fall'
+  | 'tech_kamehameha'
+  | 'tech_kienzan'
+  | 'tech_taiyoken'
+  | 'tech_sokidan'
+  | 'tech_wolf_fang'
+  | 'tech_kaioken'
+  | 'tech_barrage';
 
 export interface SpriteComp {
   atlas: string;
@@ -51,6 +64,18 @@ export interface SpriteComp {
   scale: number;
   aura: boolean;
   transformed: boolean;
+  /** Aura colour override (Kaioken red); null = character aura. */
+  auraColor?: number | null;
+  /** Visible bodily strain (Kaioken): sprite tint pulse. */
+  strain?: boolean;
+  /** Short exploration animation (pick up) that overrides idle/walk. */
+  oneShot?: { anim: AnimId; ticks: number } | null;
+  /**
+   * Technique phase frame driven by move frame data (0 prep, 1 release,
+   * 2 recovery) so the release pose lands on the exact simulation tick that
+   * spawns the projectile. Null = time-based frames.
+   */
+  phaseFrame?: number | null;
 }
 
 export type CombatStateId =
@@ -69,6 +94,8 @@ export type CombatStateId =
   | 'LAUNCHED'
   | 'RECOVERY'
   | 'SPECIAL_ATTACK'
+  | 'CONFUSED'
+  | 'BLINDED'
   | 'DEFEATED';
 
 export type AllyOrder = 'AGGRESSIVE' | 'BALANCED' | 'DEFENSIVE' | 'SUPPORT' | 'FOCUS_TARGET';
@@ -86,12 +113,15 @@ export interface Intent {
   special: boolean;
   nextTarget: boolean;
   teleport: boolean;
+  /** Named technique requested this tick (player: only after a valid sequence / direct utility press). */
+  technique: string | null;
 }
 
 export const emptyIntent = (): Intent => ({
   moveX: 0,
   moveZ: 0,
   moveY: 0,
+  technique: null,
   action: null,
   dash: false,
   guard: false,
@@ -112,9 +142,10 @@ export function clearIntent(i: Intent): void {
   i.special = false;
   i.nextTarget = false;
   i.teleport = false;
+  i.technique = null;
 }
 
-export type AiAction = 'approach' | 'attack' | 'kiBlast' | 'charge' | 'guard' | 'evade' | 'retreat' | 'circle' | 'support' | 'special' | 'chase';
+export type AiAction = 'approach' | 'attack' | 'kiBlast' | 'charge' | 'guard' | 'evade' | 'retreat' | 'circle' | 'support' | 'special' | 'chase' | 'technique';
 
 export interface AiBrain {
   style: AiStyle;
@@ -129,6 +160,8 @@ export interface AiBrain {
   circleSign: number;
   /** Difficulty: 0..1, affects reaction time and guard probability. */
   skill: number;
+  /** Ticks before this AI may use another named slot technique (limits are exempt). */
+  techniqueCooldown: number;
 }
 
 export interface MeteoState {
@@ -186,6 +219,36 @@ export interface Combatant {
   /** Freeze frames on impact for both attacker and defender. */
   hitstop: number;
   transformed: boolean;
+  /** 0..100, heroes only. Persisted in the roster between map and arena. */
+  rage: number;
+  /** Failed focus sequence: cannot attack, guard or dodge; takes extra damage. Simulation ticks. */
+  confusedTicks: number;
+  /** Taiyōken: cannot act. Simulation ticks. */
+  blindTicks: number;
+  /** Consecutive ticks spent in hit reactions (stun-lock breaker). */
+  stunChain: number;
+  /** Hits still deal damage but no longer stun while this is > 0. */
+  stunArmorTicks: number;
+  /** Active Kaioken-style buff. */
+  buff: { moveId: string; ticksLeft: number } | null;
+  /**
+   * Technique the focus sequence (or a direct utility press) authorised. A
+   * sequence-gated technique only starts when this matches, so neither the
+   * command buffer nor a slot press can skip its sequence.
+   */
+  sequenceToken: string | null;
+  /** Targeting mode chosen by the sequence (limits). */
+  castMode: 'spread' | 'concentrate';
+  /** Per-cast identity for impact ledgers. */
+  castId: number;
+  /** Sub-emissions already fired by the current technique. */
+  castEmitted: number;
+  /** Melee impact ledger of the current cast: target id -> tick of last impact. */
+  castHits: Record<number, number>;
+  /** Technique mastery levels (move id -> level). */
+  mastery: Record<string, number>;
+  /** Equipped ability slots (heroes). */
+  slots: (string | null)[];
 }
 
 export interface HeroComp {
@@ -229,6 +292,19 @@ export interface ProjectileComp {
   visual: string;
   breaksObstacles: boolean;
   power: number;
+  /** Cast identity shared by every projectile of one technique use. */
+  castId: number;
+  /** Remaining impacts this projectile may deal (guided spheres, piercing discs). */
+  impactsLeft: number;
+  /** Re-hit interval on the same target (0 = never twice). */
+  rehitTicks: number;
+  lastHitTick: Record<number, number>;
+  retarget: boolean;
+  weave: number;
+  stopsOnTerrain: boolean;
+  age: number;
+  /** Damage cap vs bosses as a fraction of their max HP. */
+  bossImpactCap: number;
 }
 
 export interface NpcComp {

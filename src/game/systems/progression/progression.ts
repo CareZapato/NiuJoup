@@ -1,8 +1,11 @@
 import { BALANCE, xpToNextLevel } from '../../content/balance';
 import { CHARACTERS } from '../../content/characters';
 import { ITEMS } from '../../content/items';
-import { SKILLS, SKILL_TREES } from '../../content/skills';
+import { MOVES } from '../../content/moves';
+import { SKILLS, SKILL_TREES, STARTING_SKILLS } from '../../content/skills';
 import type { EquipSlot, StatKey, Stats } from '../../content/types';
+
+export const SLOT_COUNT = 4;
 
 export interface PartyMember {
   characterId: string;
@@ -13,9 +16,16 @@ export interface PartyMember {
   equipment: Record<EquipSlot, string | null>;
   hp: number;
   ki: number;
+  /** Four active technique slots (move ids or empty). */
+  slots: (string | null)[];
+  /** Equipped limit (one per character). */
+  limit: string | null;
+  /** 0..100, persists between map and arena. */
+  rage: number;
 }
 
 export function createMember(characterId: string): PartyMember {
+  const def = CHARACTERS[characterId];
   const m: PartyMember = {
     characterId,
     level: 1,
@@ -25,7 +35,12 @@ export function createMember(characterId: string): PartyMember {
     equipment: { hands: null, body: null, accessory: null },
     hp: 0,
     ki: 0,
+    slots: [null, null, null, null],
+    limit: def?.limitMoveId ?? null,
+    rage: 0,
   };
+  for (const s of STARTING_SKILLS[characterId] ?? []) m.skills[s] = 1;
+  if (def) def.startingSlots.forEach((id, i) => (m.slots[i] = id && unlockedMoves(m).includes(id) ? id : null));
   const s = computeStats(m);
   m.hp = s.maxHp;
   m.ki = s.maxKi;
@@ -64,6 +79,20 @@ export function unlockedMoves(m: PartyMember): string[] {
   return [...moves];
 }
 
+/** Slot-able techniques this member has unlocked (abilities only, not limits). */
+export function unlockedTechniques(m: PartyMember): string[] {
+  return unlockedMoves(m).filter((id) => MOVES[id]?.technique?.slot === 'ability');
+}
+
+export function masteryOf(m: PartyMember): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [skillId, level] of Object.entries(m.skills)) {
+    const target = SKILLS[skillId]?.masteryOf;
+    if (target && level > 0) out[target] = level;
+  }
+  return out;
+}
+
 export function passivesOf(m: PartyMember): string[] {
   const p = new Set<string>();
   for (const [skillId, level] of Object.entries(m.skills)) {
@@ -71,6 +100,39 @@ export function passivesOf(m: PartyMember): string[] {
     for (const x of SKILLS[skillId]?.passives ?? []) p.add(x);
   }
   return [...p];
+}
+
+/** Puts newly unlocked techniques into empty slots; drops slots that are no longer valid. */
+export function normalizeSlots(m: PartyMember, autoFill = true): void {
+  const valid = new Set(unlockedTechniques(m));
+  const slots: (string | null)[] = [];
+  for (let i = 0; i < SLOT_COUNT; i++) {
+    const id = m.slots?.[i] ?? null;
+    slots.push(id && valid.has(id) && !slots.includes(id) ? id : null);
+  }
+  if (autoFill) {
+    for (const id of valid) {
+      if (slots.includes(id)) continue;
+      const free = slots.indexOf(null);
+      if (free < 0) break;
+      slots[free] = id;
+    }
+  }
+  m.slots = slots;
+  const def = CHARACTERS[m.characterId];
+  if (!m.limit || MOVES[m.limit]?.technique?.slot !== 'limit') m.limit = def?.limitMoveId ?? null;
+  m.rage = Math.max(0, Math.min(BALANCE.rage.max, m.rage ?? 0));
+}
+
+/** Assigns a technique to a slot (swapping if it was in another one). Null clears the slot. */
+export function assignSlot(m: PartyMember, index: number, moveId: string | null): boolean {
+  if (index < 0 || index >= SLOT_COUNT) return false;
+  if (moveId !== null && !unlockedTechniques(m).includes(moveId)) return false;
+  const prev = m.slots[index];
+  const other = moveId ? m.slots.indexOf(moveId) : -1;
+  if (other >= 0) m.slots[other] = prev;
+  m.slots[index] = moveId;
+  return true;
 }
 
 export interface LevelUpResult {
@@ -97,27 +159,30 @@ export function grantXp(m: PartyMember, amount: number): LevelUpResult {
 
 export type PurchaseCheck = { ok: true; cost: number } | { ok: false; reason: string };
 
-export function canPurchaseSkill(m: PartyMember, skillId: string): PurchaseCheck {
+export function canPurchaseSkill(m: PartyMember, skillId: string, completedQuests: readonly string[] = []): PurchaseCheck {
   const sk = SKILLS[skillId];
   if (!sk) return { ok: false, reason: 'Habilidad desconocida' };
   const tree = SKILL_TREES[CHARACTERS[m.characterId].skillTree];
   if (!tree.nodes.some((n) => n.skillId === skillId)) return { ok: false, reason: 'No disponible para este personaje' };
+  if (sk.unavailable) return { ok: false, reason: sk.unavailable };
   const current = m.skills[skillId] ?? 0;
   if (current >= sk.maxLevel) return { ok: false, reason: 'Nivel máximo' };
   if (m.level < sk.minCharacterLevel) return { ok: false, reason: `Requiere nivel ${sk.minCharacterLevel}` };
   for (const pre of sk.prerequisites) {
     if ((m.skills[pre.skillId] ?? 0) < pre.level) return { ok: false, reason: `Requiere ${SKILLS[pre.skillId]?.name ?? pre.skillId}` };
   }
+  if (sk.requiresQuest && !completedQuests.includes(sk.requiresQuest)) return { ok: false, reason: 'Requiere completar una misión' };
   const cost = sk.costPerLevel[current] ?? sk.costPerLevel[sk.costPerLevel.length - 1];
   if (m.ap < cost) return { ok: false, reason: `Faltan AP (${cost})` };
   return { ok: true, cost };
 }
 
-export function purchaseSkill(m: PartyMember, skillId: string): PurchaseCheck {
-  const check = canPurchaseSkill(m, skillId);
+export function purchaseSkill(m: PartyMember, skillId: string, completedQuests: readonly string[] = []): PurchaseCheck {
+  const check = canPurchaseSkill(m, skillId, completedQuests);
   if (!check.ok) return check;
   m.ap -= check.cost;
   m.skills[skillId] = (m.skills[skillId] ?? 0) + 1;
+  normalizeSlots(m);
   return check;
 }
 

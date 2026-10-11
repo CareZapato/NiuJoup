@@ -3,6 +3,7 @@ import { useFonts, VT323_400Regular } from '@expo-google-fonts/vt323';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Game } from '../game/Game';
 import { mergeSettings, type Settings } from '../game/settings';
 import { SAVE_KEYS, SaveManager } from '../game/systems/persistence/SaveManager';
@@ -22,6 +23,28 @@ function detectTouch(): boolean {
   if (Platform.OS !== 'web') return true;
   if (typeof window === 'undefined') return false;
   return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+}
+
+/** The game surface must never scroll, zoom, select text or open the long-press menu. */
+function preventPageGestures(): (() => void) | undefined {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
+  const style = document.createElement('style');
+  style.textContent =
+    'html,body,#root{height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}' +
+    'input,textarea{-webkit-user-select:text;user-select:text;touch-action:auto}';
+  document.head.appendChild(style);
+  const block = (e: Event): void => {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+  };
+  document.addEventListener('gesturestart', block);
+  document.addEventListener('selectstart', block);
+  return () => {
+    style.remove();
+    document.removeEventListener('gesturestart', block);
+    document.removeEventListener('selectstart', block);
+  };
 }
 
 function bootstrap(): { game: Game; storage: StorageAdapter; saves: SaveManager } {
@@ -112,6 +135,7 @@ export default function AppRoot() {
   );
 
   useKeyboard(game);
+  useEffect(preventPageGestures, []);
 
   const s = game.settings;
   const touchUi = s.touchControls === 'on' || (s.touchControls === 'auto' && detectTouch());
@@ -131,15 +155,17 @@ export default function AppRoot() {
   }
 
   return (
-    <GameContext.Provider value={services}>
-      <View style={styles.root}>
-        <StatusBar hidden />
-        <GameCanvas game={game} />
-        <Screens />
-        {touchUi && <TouchControls />}
-        <DebugOverlay />
-      </View>
-    </GameContext.Provider>
+    <SafeAreaProvider>
+      <GameContext.Provider value={services}>
+        <View style={styles.root}>
+          <StatusBar hidden />
+          <GameCanvas game={game} />
+          <Screens />
+          <TouchControls touch={touchUi} />
+          <DebugOverlay />
+        </View>
+      </GameContext.Provider>
+    </SafeAreaProvider>
   );
 }
 

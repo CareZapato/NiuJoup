@@ -38,6 +38,14 @@ export class TileMap {
     return dyn > base ? dyn : base;
   }
 
+  /**
+   * Height for rendering and camera collision: positions outside the map read
+   * the nearest edge tile instead of the "solid wall" 99 used by physics.
+   */
+  visualHeightAt(x: number, z: number): number {
+    return this.heightAt(Math.min(Math.max(x, 0), this.width - 0.001), Math.min(Math.max(z, 0), this.height - 0.001));
+  }
+
   isLiquid(x: number, z: number): boolean {
     return this.defAt(Math.floor(x), Math.floor(z)).liquid;
   }

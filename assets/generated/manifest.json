@@ -1,14 +1,9 @@
 {
   "generatedBy": "scripts/assets.ts export",
   "sprites": [
-    "char_kaien_world",
-    "char_kaien_battle",
-    "char_suri_world",
-    "char_suri_battle",
-    "char_oren_world",
-    "char_oren_battle",
-    "char_toren_world",
-    "char_toren_battle",
+    "char_kaien_hero",
+    "char_oren_hero",
+    "char_suri_hero",
     "enemy_sprout_world",
     "enemy_sprout_battle",
     "enemy_bandit_world",

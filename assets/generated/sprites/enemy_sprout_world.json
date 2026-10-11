@@ -68,6 +68,7 @@
     "defeat": 13
   },
   "totalColumns": 14,
+  "gridColumns": 14,
   "hurtbox": {
     "width": 12.8,
     "height": 43.2

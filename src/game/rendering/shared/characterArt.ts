@@ -1,6 +1,6 @@
 import type { AnimId } from '../../components';
 import type { AppearanceDef } from '../../content/types';
-import { BATTLE_ANIMS, buildManifest, type SpriteManifest, type ViewId, WORLD_ANIMS } from './manifest';
+import { BATTLE_ANIMS, buildManifest, frameRect, type SpriteManifest, type ViewId, WORLD_ANIMS } from './manifest';
 import { PixelCanvas, shade } from './PixelCanvas';
 
 type P2 = [number, number];
@@ -58,6 +58,7 @@ const BUILD = {
   normal: { torso: 9.5, limb: 3, head: 5.6 },
   broad: { torso: 11.5, limb: 3.6, head: 5.6 },
   huge: { torso: 13, limb: 4.4, head: 5 },
+  short: { torso: 9, limb: 2.8, head: 5.8 },
 };
 
 const VIEW_TURN: Record<ViewId, { turn: number; back: boolean }> = {
@@ -214,16 +215,17 @@ export function generateCharacterAtlas(id: string, app: AppearanceDef, mode: 'wo
   const fh = 48 * scale;
   const views: ViewId[] = mode === 'world' ? ['S', 'SE', 'E', 'NE', 'N'] : ['S', 'E', 'N'];
   const manifest = buildManifest(`${id}:${mode}`, fw, fh, views, mode === 'world' ? WORLD_ANIMS : BATTLE_ANIMS);
-  const pc = new PixelCanvas(manifest.totalColumns * fw, views.length * fh);
+  const size = frameRect(manifest, 0, 0);
+  const pc = new PixelCanvas(size.atlasW, size.atlasH);
   const outlineColor = shade(app.palette.outfitDark, 0.35);
   views.forEach((view, row) => {
     for (const [anim, def] of Object.entries(manifest.anims) as [AnimId, { frames: number }][]) {
       const poses = POSES[anim] ?? POSES.idle!;
       for (let f = 0; f < def.frames; f++) {
-        const col = manifest.columns[anim]! + f;
-        pc.setOrigin(col * fw, row * fh, scale);
+        const r = frameRect(manifest, manifest.columns[anim]! + f, row);
+        pc.setOrigin(r.x, r.y, scale);
         drawCharacter(pc, app, poses[f % poses.length], view);
-        pc.outline(col * fw, row * fh, fw, fh, outlineColor);
+        pc.outline(r.x, r.y, fw, fh, outlineColor);
       }
     }
   });

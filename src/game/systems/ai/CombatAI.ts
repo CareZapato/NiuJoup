@@ -1,10 +1,10 @@
 import { type AiAction, clearIntent, type Entity } from '../../components';
 import { BALANCE } from '../../content/balance';
-import { getMove } from '../../content/moves';
+import { getMove, MOVES } from '../../content/moves';
 import type { AiStyle } from '../../content/types';
 import { clamp, dist3, type Rng } from '../../core/math';
 import type { World } from '../../core/ecs/World';
-import { isAttacking, isStunned } from '../combat/CombatSystem';
+import { isAttacking, isStunned, techniqueBlocker } from '../combat/CombatSystem';
 import type { PowerBalance } from '../combat/PowerBalance';
 import { attackersOn, isAlive, isValidTarget } from '../combat/targeting';
 
@@ -99,8 +99,35 @@ export class CombatAI {
     for (const e of all) {
       const c = e.combatant!;
       if (!c.engaged || c.playerControlled || c.state === 'DEFEATED' || c.meteoVictim || c.meteo) continue;
+      if (c.blindTicks > 0 || c.confusedTicks > 0) {
+        clearIntent(c.intent);
+        continue;
+      }
       this.think(e, all, ctx);
     }
+  }
+
+  /** A slot technique (or the limit) this hero could use on `target` right now. */
+  private pickTechnique(e: Entity, target: Entity, ctx: AiContext): string | null {
+    const c = e.combatant!;
+    if (c.team !== 'player') return null;
+    const d = dist3(e.transform.pos, target.transform.pos);
+    const pool = [...c.slots.filter((s): s is string => !!s)];
+    const limit = e.hero ? c.unlockedMoves.find((id) => MOVES[id]?.technique?.slot === 'limit') : undefined;
+    if (limit) pool.unshift(limit);
+    for (const id of pool) {
+      const t = MOVES[id].technique!;
+      // Allies pace their named techniques so the leader (and the enemy) get room to play.
+      if (t.slot === 'ability' && c.ai.techniqueCooldown > 0) continue;
+      if (techniqueBlocker(e, id, ctx.world)) continue;
+      // Keep a ki reserve so allies don't drain themselves on techniques.
+      if (t.slot === 'ability' && c.ki < MOVES[id].kiCost + 15) continue;
+      if (t.effect === 'buff' || t.effect === 'teleport') continue;
+      const reach = t.targeting.shape === 'circle' ? t.targeting.width : t.targeting.range;
+      if (d > reach) continue;
+      return id;
+    }
+    return null;
   }
 
   private think(e: Entity, all: readonly Entity[], ctx: AiContext): void {
@@ -108,6 +135,7 @@ export class CombatAI {
     const brain = c.ai;
     clearIntent(c.intent);
     brain.actionTicks++;
+    if (brain.techniqueCooldown > 0) brain.techniqueCooldown--;
 
     if (--brain.decisionCooldown <= 0) {
       chooseTarget(e, all, ctx);
@@ -143,17 +171,20 @@ export class CombatAI {
     const aggr = w.aggression * (ord === 'AGGRESSIVE' ? 1.4 : ord === 'DEFENSIVE' ? 0.7 : ord === 'SUPPORT' ? 0.8 : 1);
     const defense = w.defense * (ord === 'DEFENSIVE' ? 1.5 : ord === 'AGGRESSIVE' ? 0.6 : 1);
     const zoning = w.zoning * (ord === 'SUPPORT' ? 1.4 : 1);
-    const canKi = c.ki >= 8;
+    const canKi = c.ki >= BALANCE.ki.costs.kiBlast;
 
     scores.attack = (d < 1.8 ? 1 : 0) * aggr + (isStunned(tc.state) && d < 2.2 ? 0.45 : 0);
     scores.approach = d > 1.6 ? clamp((d - 1.6) / 4, 0.2, 1) * 0.75 * aggr : 0;
     scores.kiBlast = canKi && d > 2.8 && d < 11 ? 0.55 * zoning : 0;
     scores.charge = d > 5 && ki < 0.35 ? 0.75 : ki < 0.2 ? 0.45 : 0.05;
     scores.guard = threat > 0 ? 0.9 * threat * defense * (0.4 + brain.skill) : 0;
-    scores.evade = threat > 0.5 && c.ki >= BALANCE.combat.dashKiCost ? 0.6 * w.agility * brain.skill : 0;
+    scores.evade = threat > 0.5 && c.ki >= BALANCE.ki.costs.dash ? 0.6 * w.agility * brain.skill : 0;
     scores.retreat = (hp < 0.3 ? 0.6 * (2 - aggr) * 0.5 : 0) + (brain.style === 'zoner' && d < 2.5 ? 0.55 : 0);
     scores.circle = d < 4.5 && attackersOn(target, e, all) >= 1 ? 0.45 : 0.15;
-    scores.special = ctx.pb.canMeteo(c.team) ? 1.6 : 0;
+    // The Meteo Attack is an enemy-side threat; heroes spend rage on limits instead.
+    scores.special = c.team === 'enemy' && ctx.pb.canMeteo(c.team) ? 1.6 : 0;
+    const tech = this.pickTechnique(e, target, ctx);
+    scores.technique = tech ? (MOVES[tech].technique!.slot === 'limit' ? 1.3 : 0.5 + zoning * 0.15) * (0.6 + brain.skill * 0.5) : 0;
     const canChase = c.unlockedMoves.includes('air_chase') || c.unlockedMoves.includes('rush');
     scores.chase = tc.state === 'LAUNCHED' && canChase && c.ki >= 6 ? 1.15 : d > 7 && c.ki > 20 ? 0.5 * w.agility : 0;
 
@@ -247,7 +278,6 @@ export class CombatAI {
         i.moveZ = (dx / l) * perp * 0.6;
         if (free && brain.actionTicks % 16 === 1) {
           if (c.unlockedMoves.includes('ki_wave') && c.ki > 45 && (c.cooldowns.ki_wave ?? 0) === 0 && ctx.rng.chance(0.3)) i.action = 'ki_wave';
-          else if (c.unlockedMoves.includes('ki_barrage') && c.ki > 30 && ctx.rng.chance(0.4)) i.action = 'ki_barrage';
           else i.action = 'ki_blast';
         }
         if (brain.actionTicks > 50) brain.decisionCooldown = 0;
@@ -300,6 +330,16 @@ export class CombatAI {
         i.special = true;
         brain.decisionCooldown = 0;
         break;
+      case 'technique': {
+        const id = this.pickTechnique(e, target, ctx);
+        if (id && free) {
+          c.castMode = 'spread';
+          i.technique = id;
+          if (MOVES[id].technique!.slot === 'ability') brain.techniqueCooldown = BALANCE.ai.allyTechniqueIntervalTicks;
+        }
+        brain.decisionCooldown = 0;
+        break;
+      }
       case 'chase': {
         const tc = target.combatant!;
         if (tc.state === 'LAUNCHED' && c.unlockedMoves.includes('air_chase') && c.lastLaunchedTarget === target.id) i.action = 'air_chase';

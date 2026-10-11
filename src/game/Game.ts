@@ -3,42 +3,49 @@ import { BALANCE, xpToNextLevel } from './content/balance';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES, STARTING_PARTY } from './content/characters';
 import { ITEMS, QUESTS } from './content/items';
 import { buildValley, type MapDef } from './content/maps/valley';
-import { getMove } from './content/moves';
-import type { AiStyle, AppearanceDef, ButtonId, EquipSlot, Stats, Team } from './content/types';
+import { getMove, MOVES, NAME_STATUS_LABEL, sequencesOf } from './content/moves';
+import type { AiStyle, AppearanceDef, ButtonId, EquipSlot, FocusSymbol, Stats, Team } from './content/types';
 import { World } from './core/ecs/World';
 import { EventBus } from './core/events/EventBus';
 import { FixedLoop, TICK_DT } from './core/loop/FixedLoop';
 import { clamp, damp, distXZ, lerpAngle, Rng, vec3, type Vec3, wrapAngle } from './core/math';
 import { type GameState, GameStateMachine } from './core/state/GameStateMachine';
 import type { GameEvents } from './events';
-import { detectDoubleTap, interpretCommand, scaledConfig } from './input/CommandInterpreter';
+import { interpretCommand, scaledConfig } from './input/CommandInterpreter';
 import { BUTTON_BITS, InputBuffer, relativeDir } from './input/InputBuffer';
-import { RawInput } from './input/RawInput';
-import { DEFAULT_SETTINGS, type BindAction, type Settings } from './settings';
+import { InputReader, RawInput } from './input/RawInput';
+import { DEFAULT_SETTINGS, type BindAction, type Settings, SLOT_ACTIONS } from './settings';
 import { CombatAI } from './systems/ai/CombatAI';
 import { ExplorerAI } from './systems/ai/ExplorerAI';
-import { updateAnimations } from './systems/animation/AnimationSystem';
-import { CameraRig, type CameraPose, makePose, screenToWorld, worldToScreen, yawForScreenRight } from './systems/camera/CameraRig';
-import { type Arena, type CombatContext, CombatSystem } from './systems/combat/CombatSystem';
+import { POSE_ANIM, updateAnimations } from './systems/animation/AnimationSystem';
+import { CameraRig, type CameraPose, clampFocusToMap, makePose, screenToWorld, worldToScreen, yawForScreenRight } from './systems/camera/CameraRig';
+import { type Arena, canAct, type CombatContext, CombatSystem, techniqueBlocker } from './systems/combat/CombatSystem';
+import { chargeKi, penalizeKi, regenKi, spendKi } from './systems/combat/ki';
 import { PowerBalance } from './systems/combat/PowerBalance';
 import { createProjectile, ProjectileSystem } from './systems/combat/ProjectileSystem';
-import { cycleTarget, isAlive } from './systems/combat/targeting';
+import { limitReady, rageFromDominance } from './systems/combat/rage';
+import { clipLine, cycleTarget, isAlive, isWorldHostile } from './systems/combat/targeting';
+import { type FocusCandidate, FocusController, type FocusOutcome } from './systems/focus/FocusController';
 import { followTrail, moveGroundBody, PartyTrail, tryJump } from './systems/movement/ExplorationMovement';
 import type { SaveData, WorldPersistence } from './systems/persistence/saveSchema';
 import type { SaveManager } from './systems/persistence/SaveManager';
 import { EquipmentManager, InventoryManager, LootTableManager } from './systems/progression/inventory';
 import {
+  assignSlot,
   computeStats,
   createMember,
   type FarmLedger,
   farmMultiplier,
   grantXp,
   levelGapMultiplier,
+  masteryOf,
+  normalizeSlots,
   passivesOf,
   type PartyMember,
   purchaseSkill,
   recordKill,
   unlockedMoves,
+  unlockedTechniques,
 } from './systems/progression/progression';
 import { QuestManager, type QuestUpdate } from './systems/progression/quests';
 
@@ -71,6 +78,34 @@ export interface UiCombatant {
   controlled: boolean;
   color: number;
   transformed: boolean;
+  rage: number;
+}
+
+export interface UiSlot {
+  index: number;
+  moveId: string | null;
+  name: string;
+  kiCost: number;
+  cooldown: number;
+  cooldownMax: number;
+  affordable: boolean;
+  /** Not usable in the current context (world vs combat) or blocked. */
+  usable: boolean;
+  blocked: string | null;
+  sequence: FocusSymbol[] | null;
+  direct: boolean;
+}
+
+export interface UiFocus {
+  active: boolean;
+  /** Real seconds left in the window. */
+  remaining: number;
+  window: number;
+  input: FocusSymbol[];
+  candidates: { moveId: string; name: string; sequence: FocusSymbol[]; mode: 'spread' | 'concentrate'; limit: boolean; matching: boolean }[];
+  /** Simulation seconds until focus can be used again. */
+  cooldown: number;
+  ready: boolean;
 }
 
 export interface UiSnapshot {
@@ -78,7 +113,12 @@ export interface UiSnapshot {
   state: GameState;
   previousState: GameState;
   cameraMode: string;
-  party: { characterId: string; name: string; level: number; hp: number; maxHp: number; ki: number; maxKi: number; xp: number; xpNext: number; ap: number; isLeader: boolean }[];
+  party: { characterId: string; name: string; level: number; hp: number; maxHp: number; ki: number; maxKi: number; xp: number; xpNext: number; ap: number; isLeader: boolean; rage: number }[];
+  slots: UiSlot[];
+  limit: { moveId: string; name: string; rage: number; ready: boolean; sequence: FocusSymbol[] } | null;
+  focus: UiFocus;
+  /** Status of the controlled fighter. */
+  status: { confused: number; charging: boolean; kaioken: number; blinded: number };
   combatants: UiCombatant[];
   pb: { value: number; dominance: Team | null; ticksLeft: number; threshold: number };
   combo: number;
@@ -107,9 +147,24 @@ interface Encounter {
 }
 
 const BUTTONS: ButtonId[] = ['light', 'heavy', 'ki', 'guard', 'charge', 'dash', 'up', 'down', 'special'];
+const SIM_ACTIONS: BindAction[] = [...BUTTONS, 'focus', ...SLOT_ACTIONS, 'camLeft', 'camRight', 'nextAlly', 'nextTarget', 'menu', 'debug'];
+/** Buttons that act as focus symbols (directions come from the stick). */
+const FOCUS_BUTTONS: [BindAction, FocusSymbol][] = [
+  ['light', 'P'],
+  ['ki', 'K'],
+  ['heavy', 'H'],
+  ['guard', 'G'],
+];
+const FOCUS_DIRS: [BindAction, number, number][] = [
+  ['stickUp', 0, 1],
+  ['stickDown', 0, -1],
+  ['stickLeft', -1, 0],
+  ['stickRight', 1, 0],
+];
+const F = BALANCE.focus;
 
 function makeBrain(style: AiStyle, skill: number): AiBrain {
-  return { style, order: 'BALANCED', action: 'approach', actionTicks: 0, decisionCooldown: 0, scores: {}, comboStep: 0, reactionTicks: 0, circleSign: 1, skill };
+  return { style, order: 'BALANCED', action: 'approach', actionTicks: 0, decisionCooldown: 0, scores: {}, comboStep: 0, reactionTicks: 0, circleSign: 1, skill, techniqueCooldown: 0 };
 }
 
 function makeCombatant(team: Team, name: string, level: number, stats: Stats, moves: string[], passives: string[], style: AiStyle, meteo: string, joint: string[], skill: number): Combatant {
@@ -155,7 +210,34 @@ function makeCombatant(team: Team, name: string, level: number, stats: Stats, mo
     lastLaunchTick: -999,
     hitstop: 0,
     transformed: false,
+    rage: 0,
+    confusedTicks: 0,
+    blindTicks: 0,
+    stunChain: 0,
+    stunArmorTicks: 0,
+    buff: null,
+    sequenceToken: null,
+    castMode: 'spread',
+    castId: 0,
+    castEmitted: 0,
+    castHits: {},
+    mastery: {},
+    slots: [null, null, null, null],
   };
+}
+
+function heroCombatant(id: string, m: PartyMember, order: AiBrain['order']): Combatant {
+  const def = CHARACTERS[id];
+  const moves = unlockedMoves(m);
+  if (m.limit) moves.push(m.limit);
+  const c = makeCombatant('player', def.name, m.level, computeStats(m), moves, passivesOf(m), def.aiStyle, def.meteoMoveId, def.jointPartners, 0.8);
+  c.hp = m.hp;
+  c.ki = m.ki;
+  c.rage = m.rage;
+  c.slots = [...m.slots];
+  c.mastery = masteryOf(m);
+  c.ai.order = order;
+  return c;
 }
 
 /**
@@ -198,8 +280,32 @@ export class Game {
   private explorerAI = new ExplorerAI();
   private projectiles: ProjectileSystem;
   private trail = new PartyTrail();
-  private prevHeld = new Set<BindAction>();
-  private pressed = new Set<BindAction>();
+  /** 60 Hz simulation reader. */
+  private sim: InputReader;
+  /** Real-time reader used only while focusing. */
+  private focusReader: InputReader;
+  readonly focus = new FocusController();
+  /** Simulation tick from which focus can be used again. */
+  focusReadyTick = 0;
+  /** Current simulation time scale (1, or the focus slow motion). Never stacked. */
+  timeScale = 1;
+  /** Real seconds since boot (UI clock). */
+  realTime = 0;
+  /** 0..1 world desaturation driven by focus (real-time ramp). */
+  focusFilter = 0;
+  /** Viewport aspect (width / height), reported by the renderer; used by the camera edge clamp. */
+  viewAspect = 16 / 9;
+  /** Written by the view layer; shown in debug mode (screen vs internal vs sprite resolution, zoom). */
+  renderStats = { screenW: 0, screenH: 0, internalW: 0, internalH: 0, dpr: 1, refScale: 1 };
+
+  setRenderStats(s: Game['renderStats']): void {
+    this.renderStats = s;
+  }
+  private pendingTechnique: string | null = null;
+  private pendingTicks = 0;
+  private lastFocusNotify = 0;
+  private castSeq = 1;
+  private analog = { x: 0, y: 0 };
   private stick = { x: 0, y: 0 };
   private wdir = { x: 0, z: 0 };
   private sdir = { x: 0, y: 0 };
@@ -223,10 +329,20 @@ export class Game {
 
   constructor() {
     this.loop = new FixedLoop((t) => this.step(t));
+    this.sim = new InputReader(this.input, SIM_ACTIONS);
+    this.focusReader = new InputReader(this.input, [...FOCUS_BUTTONS.map(([a]) => a), ...FOCUS_DIRS.map(([a]) => a), 'menu']);
     this.projectiles = new ProjectileSystem((p) => this.projectileVsObstacles(p));
     this.ui = this.buildUi();
     this.fsm.transition('MAIN_MENU');
     this.events.on('toast', (t) => this.pushToast(t.text, t.tone ?? 'info'));
+    // Focus grants no invulnerability: any hit on the focusing fighter interrupts it.
+    this.events.on('hit', (h) => {
+      if (this.focus.active && h.defenderId === this.focus.casterId) this.endFocus(this.focus.interrupt());
+    });
+    this.events.on('limitReady', (l) => {
+      const e = this.world.get(l.entityId);
+      if (e?.hero) this.pushToast(`¡Límite de ${CHARACTERS[e.hero.characterId].name} listo!`, 'good');
+    });
     this.events.on('saved', (s) => {
       this.saveStatus = s.ok ? { status: 'saved', text: `Guardado (${s.reason})` } : { status: 'error', text: `Error al guardar: ${s.error ?? ''}` };
       this.saveStatusUntil = this.playTime + (s.ok ? 3 : 8);
@@ -277,6 +393,8 @@ export class Game {
       const s = computeStats(m);
       m.hp = clamp(m.hp, 1, s.maxHp);
       m.ki = clamp(m.ki, 0, s.maxKi);
+      // Respect the player's slot layout (empty slots stay empty).
+      normalizeSlots(m, false);
       this.roster[id] = m;
     }
     this.partyOrder = d.partyOrder.filter((id) => CHARACTERS[id]).slice(0, 3);
@@ -342,11 +460,7 @@ export class Game {
     this.partyOrder.forEach((id, i) => {
       const m = this.roster[id];
       const def = CHARACTERS[id];
-      const stats = computeStats(m);
-      const c = makeCombatant('player', def.name, m.level, stats, unlockedMoves(m), passivesOf(m), def.aiStyle, def.meteoMoveId, def.jointPartners, 0.8);
-      c.hp = m.hp;
-      c.ki = m.ki;
-      c.ai.order = this.allyOrders[id] ?? 'BALANCED';
+      const c = heroCombatant(id, m, this.allyOrders[id] ?? 'BALANCED');
       const x = px - i * 0.6;
       const z = pz + i * 0.6;
       this.world.create({
@@ -448,13 +562,28 @@ export class Game {
   /** Called by the renderer every frame with real elapsed seconds. Returns interpolation alpha. */
   frame(dt: number): number {
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
+    this.realTime += dt;
     this.pollGamepad();
-    return this.loop.advance(dt);
+    if (this.focus.active) this.updateFocus(dt);
+    // One multiplier, owned by focus. Hitstop is per-entity and never stacks with it.
+    this.timeScale = this.focus.active ? F.timeScale : 1;
+    const target = this.focus.active ? 1 : 0;
+    this.focusFilter += clamp(target - this.focusFilter, -dt / F.filterRampSeconds, dt / F.filterRampSeconds);
+    return this.loop.advance(dt * this.timeScale);
+  }
+
+  private get pressed(): Set<BindAction> {
+    return this.sim.pressed;
+  }
+
+  private held(a: BindAction): boolean {
+    return this.sim.held(a);
   }
 
   private step(tick: number): void {
     this.sampleInput();
     const s = this.fsm.state;
+    if (this.focus.active && (s !== 'ACTIVE_COMBAT' || !this.focusCasterValid())) this.endFocus(this.focus.cancel());
     if (this.pressed.has('debug')) {
       this.settings.debug = !this.settings.debug;
       this.notify();
@@ -512,7 +641,6 @@ export class Game {
 
   private endTick(tick: number): void {
     this.fsm.tick();
-    this.input.consumePulses();
     if (tick % 6 === 0) {
       this.toasts = this.toasts.filter((t) => t.until > this.playTime);
       if (this.saveStatus.status !== 'idle' && this.saveStatus.status !== 'saving' && this.playTime > this.saveStatusUntil) this.saveStatus = { status: 'idle', text: '' };
@@ -521,16 +649,154 @@ export class Game {
   }
 
   private sampleInput(): void {
-    this.pressed.clear();
-    const all: BindAction[] = ['light', 'heavy', 'ki', 'guard', 'charge', 'dash', 'up', 'down', 'special', 'camLeft', 'camRight', 'nextAlly', 'nextTarget', 'menu', 'debug'];
-    for (const a of all) {
-      const h = this.input.held(a);
-      if (h && !this.prevHeld.has(a)) this.pressed.add(a);
-      if (h) this.prevHeld.add(a);
-      else this.prevHeld.delete(a);
-    }
+    this.sim.sample();
     this.input.stick(this.stick, this.settings.joystickSensitivity);
     screenToWorld(this.wdir, this.stick.x, this.stick.y, this.camera.pose.yaw);
+  }
+
+  // ---------------------------------------------------------------- focus combos
+
+  private focusCasterValid(): boolean {
+    const e = this.world.get(this.focus.casterId);
+    return !!e?.combatant && e.combatant.playerControlled && e.combatant.state !== 'DEFEATED' && e.id === this.controlledId;
+  }
+
+  /** Candidates for a focus attempt: equipped sequences (+ limit), or one preselected technique. */
+  private focusCandidates(e: Entity, preselect: string | null): { list: FocusCandidate[]; reason: string | null } {
+    const c = e.combatant!;
+    const ids = preselect ? [preselect] : [...c.slots.filter((s): s is string => !!s), ...(this.roster[e.hero?.characterId ?? '']?.limit ? [this.roster[e.hero!.characterId].limit!] : [])];
+    const list: FocusCandidate[] = [];
+    let reason: string | null = null;
+    for (const id of ids) {
+      const m = MOVES[id];
+      if (!m?.technique?.sequence) continue;
+      const blocked = techniqueBlocker(e, id, this.world);
+      if (blocked) {
+        reason ??= `${m.name}: ${blocked}`;
+        continue;
+      }
+      for (const s of sequencesOf(m)) list.push({ moveId: id, name: m.name, sequence: s.sequence as FocusSymbol[], mode: s.mode, limit: m.technique.slot === 'limit' });
+    }
+    return { list, reason: list.length ? null : (reason ?? 'No hay técnicas con secuencia equipadas') };
+  }
+
+  /** Starts focus (resources and cooldown are validated here, at sequence start). */
+  tryFocus(preselect: string | null = null): boolean {
+    if (this.fsm.state !== 'ACTIVE_COMBAT' || this.focus.active) return false;
+    const e = this.controlled();
+    if (!e?.combatant || !e.hero) return false;
+    const c = e.combatant;
+    if (this.loop.tick < this.focusReadyTick) {
+      this.pushToast(`Concentración en recarga (${Math.ceil((this.focusReadyTick - this.loop.tick) * TICK_DT)} s)`, 'warn');
+      return false;
+    }
+    if (!canAct(c)) return false;
+    const { list, reason } = this.focusCandidates(e, preselect);
+    if (!list.length) {
+      this.pushToast(reason ?? 'No disponible', 'warn');
+      return false;
+    }
+    const target = this.world.get(c.targetId);
+    let tx = 1;
+    let ty = 0;
+    if (target) {
+      worldToScreen(this.sdir, target.transform.pos.x - e.transform.pos.x, target.transform.pos.z - e.transform.pos.z, this.camera.pose.yaw);
+      tx = this.sdir.x;
+      ty = this.sdir.y;
+    }
+    if (!this.focus.start(e.id, list, preselect, tx, ty)) return false;
+    this.focusReader.resync();
+    this.buffer.clear();
+    clearIntent(c.intent);
+    this.events.emit('focusStart', { entityId: e.id, preselected: preselect });
+    this.notify();
+    return true;
+  }
+
+  /** Real-time focus input: buttons become symbols; keys don't repeat; the stick needs neutral. */
+  private updateFocus(dt: number): void {
+    this.focusReader.sample();
+    let out: FocusOutcome | null = null;
+    if (this.focusReader.pressed.has('menu')) out = this.focus.cancel();
+    for (const [a, dx, dy] of FOCUS_DIRS) if (!out && this.focusReader.pressed.has(a)) out = this.focus.push(this.focus.symbolFor(dx, dy));
+    for (const [a, sym] of FOCUS_BUTTONS) if (!out && this.focusReader.pressed.has(a)) out = this.focus.push(sym);
+    if (!out) {
+      this.analog.x = this.input.touchStick.x + this.input.padStick.x;
+      this.analog.y = this.input.touchStick.y + this.input.padStick.y;
+      out = this.focus.stick(this.analog.x, this.analog.y);
+    }
+    if (!out) out = this.focus.update(dt);
+    if (out) this.endFocus(out);
+    else if (this.focusReader.pressed.size || this.realTime - this.lastFocusNotify > 0.08) {
+      this.lastFocusNotify = this.realTime;
+      this.notify();
+    }
+  }
+
+  private endFocus(out: FocusOutcome | null): void {
+    if (!out) return;
+    const e = this.world.get(out.casterId);
+    const c = e?.combatant;
+    // Inputs used as symbols must not leak into normal attacks once time resumes.
+    this.sim.resync();
+    this.buffer.clear();
+    this.timeScale = 1;
+    if (c && out.result !== 'cancelled') this.focusReadyTick = this.loop.tick + F.cooldownTicks;
+    if (c && out.result === 'success' && out.candidate) {
+      c.sequenceToken = out.candidate.moveId;
+      c.castMode = out.candidate.mode;
+      this.pendingTechnique = out.candidate.moveId;
+      this.pendingTicks = 15;
+    } else if (c && (out.result === 'invalid' || out.result === 'timeout')) {
+      // Vulnerable: confused for 1.5 s of normal-speed simulation, extra damage taken, no i-frames.
+      c.confusedTicks = F.confusedTicks;
+      c.invuln = 0;
+      c.moveId = null;
+      c.bufferedAction = null;
+      const pool = out.remaining.length ? out.remaining : [];
+      const limitAttempt = out.preselected ? !!MOVES[out.preselected]?.technique && MOVES[out.preselected].technique!.slot === 'limit' : pool.length > 0 && pool.every((p) => p.limit);
+      if (limitAttempt) c.rage = Math.max(0, c.rage * (1 - F.failRageFraction));
+      else penalizeKi(c, F.failKiPenalty);
+      this.events.emit('confused', { entityId: e!.id, ticks: c.confusedTicks });
+      this.pushToast(out.result === 'timeout' ? '¡Tiempo agotado! Confundido' : '¡Secuencia fallida! Confundido', 'warn');
+    } else if (out.result === 'interrupted') {
+      this.pushToast('Concentración interrumpida', 'warn');
+    }
+    this.events.emit('focusEnd', { entityId: out.casterId, result: out.result, moveId: out.candidate?.moveId ?? null });
+    this.notify();
+  }
+
+  /** Slot / limit / focus buttons in combat. */
+  private combatTechniqueInput(e: Entity): void {
+    const c = e.combatant!;
+    if (this.pressed.has('focus')) {
+      this.tryFocus(null);
+      return;
+    }
+    if (this.pressed.has('special')) {
+      const limit = this.roster[e.hero?.characterId ?? '']?.limit;
+      if (limit) this.tryFocus(limit);
+      return;
+    }
+    SLOT_ACTIONS.forEach((a, i) => {
+      if (!this.pressed.has(a)) return;
+      const id = c.slots[i];
+      if (!id) return;
+      const t = MOVES[id].technique!;
+      if (t.sequence) {
+        this.tryFocus(id);
+        return;
+      }
+      // Utilities (Kaioken, Teletransportación) activate directly.
+      const blocked = techniqueBlocker(e, id, this.world);
+      if (blocked) {
+        this.pushToast(`${MOVES[id].name}: ${blocked}`, 'warn');
+        return;
+      }
+      c.sequenceToken = id;
+      this.pendingTechnique = id;
+      this.pendingTicks = 15;
+    });
   }
 
   private pollGamepad(): void {
@@ -552,22 +818,33 @@ export class Game {
   private tickExploration(tick: number, allowEncounters: boolean): void {
     const leader = this.leader();
     const X = BALANCE.exploration;
+    const lc = leader.combatant!;
+    const charging = !this.dialogue && allowEncounters && this.held('charge') && lc.ki < lc.stats.maxKi;
+    lc.state = charging ? 'CHARGE' : 'IDLE';
     if (this.dialogue) {
       moveGroundBody(leader, this.map.tiles, 0, 0, 0);
       if (this.pressed.has('light')) this.advanceDialogue();
+    } else if (charging) {
+      // Same manual charge as in combat: immobile, no actions while held.
+      moveGroundBody(leader, this.map.tiles, 0, 0, 0);
+      chargeKi(lc);
     } else {
-      const running = this.input.held('dash');
+      const running = this.held('dash');
       moveGroundBody(leader, this.map.tiles, this.wdir.x, this.wdir.z, running ? X.runSpeed : X.walkSpeed);
       if (this.pressed.has('up')) tryJump(leader);
       if (allowEncounters) {
         if (this.pressed.has('light')) this.interact();
         if (this.pressed.has('ki')) this.worldKiBlast();
         if (this.pressed.has('nextAlly')) this.cycleLeader();
+        SLOT_ACTIONS.forEach((a, i) => {
+          if (this.pressed.has(a)) this.worldTechnique(lc.slots[i]);
+        });
       }
     }
     if (this.worldKiCooldown > 0) this.worldKiCooldown--;
+    for (const h of this.heroes()) this.tickWorldVitals(h);
     this.trail.record(leader.transform.pos.x, leader.transform.pos.z);
-    const running = this.input.held('dash');
+    const running = this.held('dash');
     let slot = 0;
     for (const h of this.heroes()) {
       if (h === leader) continue;
@@ -654,12 +931,14 @@ export class Game {
         this.saveManager?.request('checkpoint', true);
         break;
       }
-      case 'boulder':
-        this.pushToast(
-          this.leader().combatant!.passives.includes('break_obstacles') ? 'Pulsa L para lanzar una Onda de Ki contra la roca' : 'Roca agrietada. Necesitas la técnica Onda de Ki para romperla.',
-          'info',
-        );
+      case 'boulder': {
+        const breaks = (id: string): boolean => MOVES[id].technique?.effect === 'beam' || !!MOVES[id].projectile?.breaksObstacles;
+        const breakers = this.leader()
+          .combatant!.slots.filter((s): s is string => !!s && breaks(s))
+          .map((s) => MOVES[s].name);
+        this.pushToast(breakers.length ? `Roca agrietada: usa ${breakers.join(' o ')} desde tus técnicas` : 'Roca agrietada. Un Kamehameha, un Kienzan o un Sōkidan la romperían.', 'info');
         break;
+      }
       default:
         break;
     }
@@ -680,9 +959,97 @@ export class Game {
   private worldKiBlast(): void {
     if (this.worldKiCooldown > 0) return;
     const leader = this.leader();
-    const strong = leader.combatant!.passives.includes('break_obstacles');
-    this.worldKiCooldown = 30;
-    createProjectile(this.combatCtx(0), leader, getMove(strong ? 'ki_wave' : 'ki_blast'), null, this.projectileSeq++);
+    const m = getMove('ki_blast');
+    if (!spendKi(leader.combatant!, m.kiCost)) {
+      this.pushToast('Ki insuficiente', 'warn');
+      return;
+    }
+    this.worldKiCooldown = BALANCE.ki.worldBlastCooldownTicks;
+    createProjectile(this.combatCtx(0), leader, m, null, this.projectileSeq++, { castId: this.castSeq++ });
+  }
+
+  /** Exploration: cooldowns and limited passive regen use the same ki model as combat. */
+  private tickWorldVitals(h: Entity): void {
+    const c = h.combatant!;
+    for (const k in c.cooldowns) if (c.cooldowns[k] > 0) c.cooldowns[k]--;
+    if (c.state !== 'CHARGE') regenKi(c);
+  }
+
+  /**
+   * Technique used on the map: same unlock, cooldown and ki rules as combat
+   * (ki charged once). Utilities only — map casts never damage roaming enemies.
+   */
+  worldTechnique(id: string | null): boolean {
+    if (!id || this.fsm.state !== 'WORLD_EXPLORATION' || this.dialogue) return false;
+    const leader = this.leader();
+    const c = leader.combatant!;
+    const m = MOVES[id];
+    const t = m?.technique;
+    if (!t) return false;
+    if (!t.usableInWorld) {
+      this.pushToast(`${m.name} solo se puede usar en combate`, 'info');
+      return false;
+    }
+    if (!c.unlockedMoves.includes(id)) return false;
+    if ((c.cooldowns[id] ?? 0) > 0) {
+      this.pushToast(`${m.name}: en recarga`, 'warn');
+      return false;
+    }
+    if (!spendKi(c, m.kiCost)) {
+      this.pushToast(`${m.name}: ki insuficiente`, 'warn');
+      return false;
+    }
+    if (m.cooldownTicks > 0) c.cooldowns[id] = m.cooldownTicks;
+    const castId = this.castSeq++;
+    const ctx = this.combatCtx(this.loop.tick);
+    const yaw = leader.transform.yaw;
+    const dx = Math.sin(yaw);
+    const dz = Math.cos(yaw);
+    const p = leader.transform.pos;
+    const y = p.y + (leader.body?.height ?? 1.4) * 0.55;
+    if (t.effect === 'beam') {
+      const length = clipLine(this.map.tiles, p.x, p.z, y, dx, dz, t.targeting.range);
+      this.events.emit('beamFired', { ownerId: leader.id, x: p.x + dx * 0.5, y, z: p.z + dz * 0.5, dirX: dx, dirZ: dz, length, width: t.targeting.width, ticks: m.active, color: leader.appearance?.palette.aura ?? 0x9ad8ff });
+      this.breakObstaclesAlong(p.x, p.z, dx, dz, length + 1.2, t.targeting.width + 1);
+    } else if (t.effect === 'flash') {
+      let n = 0;
+      for (const e of this.world.query('explorer')) {
+        if (!isWorldHostile(e) || distXZ(e.transform.pos, p) > t.targeting.width) continue;
+        if (!this.map.tiles.lineOfSight(p.x, p.z, e.transform.pos.x, e.transform.pos.z, y + 0.4)) continue;
+        // Blinded patrols lose track of the party for a while (no damage).
+        e.explorer!.state = 'RETURN';
+        e.explorer!.alertTicks = -(t.blindTicks ?? 120) * 2;
+        n++;
+      }
+      this.events.emit('flash', { ownerId: leader.id, x: p.x, y: p.y + 1.2, z: p.z, radius: t.targeting.width, affected: n });
+    } else if (m.projectile) {
+      createProjectile(ctx, leader, m, null, this.projectileSeq++, { castId, lift: t.pose === 'kienzan' ? (leader.body?.height ?? 1.4) * 0.55 : 0, impacts: t.targeting.maxImpacts });
+    }
+    leader.sprite!.oneShot = { anim: POSE_ANIM[t.pose], ticks: m.startup + 10 };
+    this.events.emit('techniqueUsed', { entityId: leader.id, moveId: id, name: m.name, limit: false });
+    return true;
+  }
+
+  private breakObstaclesAlong(ox: number, oz: number, dx: number, dz: number, length: number, width: number): void {
+    for (const b of [...this.world.query('interactable')]) {
+      if (b.kind !== 'boulder') continue;
+      const rx = b.transform.pos.x - ox;
+      const rz = b.transform.pos.z - oz;
+      const along = rx * dx + rz * dz;
+      if (along < 0 || along > length || Math.abs(rx * -dz + rz * dx) > width) continue;
+      this.destroyBoulder(b);
+    }
+  }
+
+  private destroyBoulder(b: Entity): void {
+    const id = b.stableId;
+    this.world.remove(b.id);
+    this.map.tiles.clearDynamicBlocker(Math.floor(b.transform.pos.x), Math.floor(b.transform.pos.z));
+    if (!this.worldState.brokenObstacles.includes(id)) this.worldState.brokenObstacles.push(id);
+    this.events.emit('obstacleBroken', { id, x: b.transform.pos.x, z: b.transform.pos.z });
+    this.camera.addTrauma(0.6);
+    this.pushToast('¡La roca se ha hecho pedazos!', 'good');
+    this.saveManager?.request('obstáculo destruido', true);
   }
 
   private projectileVsObstacles(p: Entity): boolean {
@@ -691,14 +1058,7 @@ export class Game {
       if (b.kind !== 'boulder') continue;
       if (distXZ(b.transform.pos, pos) > 1.4 || pos.y > 3) continue;
       if (!p.projectile!.breaksObstacles) return true;
-      const id = b.stableId;
-      this.world.remove(b.id);
-      this.map.tiles.clearDynamicBlocker(Math.floor(b.transform.pos.x), Math.floor(b.transform.pos.z));
-      if (!this.worldState.brokenObstacles.includes(id)) this.worldState.brokenObstacles.push(id);
-      this.events.emit('obstacleBroken', { id, x: b.transform.pos.x, z: b.transform.pos.z });
-      this.camera.addTrauma(0.6);
-      this.pushToast('¡La roca se ha hecho pedazos!', 'good');
-      this.saveManager?.request('obstáculo destruido', true);
+      this.destroyBoulder(b);
       return true;
     }
     return false;
@@ -822,9 +1182,12 @@ export class Game {
       c.comboCount = 0;
       c.hitstun = 0;
       c.hitstop = 0;
-      c.cooldowns = {};
+      c.confusedTicks = 0;
+      c.blindTicks = 0;
+      c.sequenceToken = null;
       c.playerControlled = e === leader;
       c.ai.decisionCooldown = 0;
+      c.ai.techniqueCooldown = BALANCE.ai.allyTechniqueOpeningTicks;
       clearIntent(c.intent);
       e.body!.flying = true;
       e.body!.vel.x = e.body!.vel.y = e.body!.vel.z = 0;
@@ -881,7 +1244,8 @@ export class Game {
       rng: this.rng,
       tick,
       arena: this.encounter?.arena ?? { center: vec3(), radius: 999 },
-      spawnProjectile: (owner, move, target) => createProjectile(this.combatCtx(tick), owner, move, target, this.projectileSeq++),
+      spawnProjectile: (owner, move, target, opts) => createProjectile(this.combatCtx(tick), owner, move, target, this.projectileSeq++, opts),
+      nextCastId: () => this.castSeq++,
     };
   }
 
@@ -917,11 +1281,16 @@ export class Game {
     const ctl = this.controlled();
     const list = this.engaged();
     if (ctl && playerActive) {
-      if (this.pressed.has('nextAlly')) this.cycleControlled();
+      if (this.pressed.has('nextAlly') && !this.focus.active) this.cycleControlled();
       const c2 = this.controlled();
       if (c2) this.playerCombatIntent(c2, tick);
     } else if (ctl) {
       clearIntent(ctl.combatant!.intent);
+    }
+    if (this.pb.dominance === 'player') {
+      for (const e of list) {
+        if (e.combatant!.team === 'player' && rageFromDominance(e.combatant!) && e.hero) this.events.emit('limitReady', { entityId: e.id, characterId: e.hero.characterId });
+      }
     }
     const leaderTarget = this.controlled()?.combatant?.targetId ?? -1;
     this.combatAI.update(list, { world: this.world, pb: this.pb, rng: this.rng, tick, leaderTargetId: leaderTarget });
@@ -932,12 +1301,8 @@ export class Game {
     this.pb.tick();
     if (this.pb.dominance !== domBefore) {
       this.events.emit('dominance', { team: this.pb.dominance });
-      if (this.pb.dominance === 'player') this.pushToast('¡DOMINIO! Pulsa F para un Meteo Attack', 'good');
+      if (this.pb.dominance === 'player') this.pushToast('¡DOMINIO! Tu furia crece más rápido', 'good');
       else if (this.pb.dominance === 'enemy') this.pushToast('¡El enemigo domina el combate! Defiéndete (U)', 'warn');
-    }
-    if (this.pb.dominance === 'player') {
-      // Teammates with the meteo-mastery passive extend the window.
-      this.pb.windowBonusTicks = this.heroes().some((h) => h.combatant!.passives.includes('meteo_plus')) ? 120 : 0;
     }
   }
 
@@ -949,18 +1314,34 @@ export class Game {
       this.cycleControlled();
       return;
     }
+    // While focusing, every input is a sequence symbol: no movement or normal attacks.
+    if (this.focus.active && this.focus.casterId === e.id) return;
+    if (this.pendingTechnique) {
+      if (c.moveId === this.pendingTechnique || c.sequenceToken !== this.pendingTechnique) {
+        this.pendingTechnique = null;
+      } else if (this.pendingTicks-- > 0) {
+        i.technique = this.pendingTechnique;
+        return;
+      } else {
+        this.pushToast(`${MOVES[this.pendingTechnique].name}: no se pudo ejecutar`, 'warn');
+        c.sequenceToken = null;
+        this.pendingTechnique = null;
+      }
+    }
     i.moveX = this.wdir.x;
     i.moveZ = this.wdir.z;
-    i.moveY = (this.input.held('up') ? 1 : 0) - (this.input.held('down') ? 1 : 0);
-    i.guard = this.input.held('guard');
-    i.charge = this.input.held('charge');
-    i.special = this.pressed.has('special');
+    i.moveY = (this.held('up') ? 1 : 0) - (this.held('down') ? 1 : 0);
+    i.guard = this.held('guard');
+    i.charge = this.held('charge');
     if (this.pressed.has('nextTarget')) {
       const t = cycleTarget(e, this.engaged());
       if (t) c.targetId = t.id;
     }
+    this.combatTechniqueInput(e);
+    if (this.focus.active) return;
     let held = 0;
-    for (const b of BUTTONS) if (this.input.held(b)) held |= BUTTON_BITS[b];
+    // A tap shorter than one tick still registers as a press for the command buffer.
+    for (const b of BUTTONS) if (this.held(b) || this.pressed.has(b)) held |= BUTTON_BITS[b];
     const target = this.world.get(c.targetId);
     let tx = 1;
     let ty = 0;
@@ -978,7 +1359,6 @@ export class Game {
       else i.dash = true;
     } else if (cmd) i.action = cmd;
     if (!i.action && this.pressed.has('dash')) i.dash = true;
-    if (c.passives.includes('teleport') && detectDoubleTap(this.buffer, this.interpreterCfg)) i.teleport = true;
   }
 
   private cycleControlled(): void {
@@ -1051,6 +1431,7 @@ export class Game {
       if (hero?.combatant) {
         m.hp = hero.combatant.state === 'DEFEATED' ? Math.ceil(hero.combatant.stats.maxHp * 0.25) : hero.combatant.hp;
         m.ki = hero.combatant.ki;
+        m.rage = hero.combatant.rage;
       }
       const r = grantXp(m, xp * share);
       if (inParty) m.ap += ap;
@@ -1095,8 +1476,17 @@ export class Game {
       c.meteo = null;
       c.meteoVictim = false;
       c.state = 'IDLE';
+      c.buff = null;
+      c.confusedTicks = 0;
+      c.blindTicks = 0;
+      c.sequenceToken = null;
+      if (e.sprite) {
+        e.sprite.auraColor = null;
+        e.sprite.strain = false;
+      }
       e.body!.flying = false;
     }
+    this.pendingTechnique = null;
     if (defeat) {
       for (const id of enc.enemyIds) {
         const e = this.world.get(id);
@@ -1113,8 +1503,14 @@ export class Game {
       for (const id of Object.keys(this.roster)) {
         const m = this.roster[id];
         const s = computeStats(m);
+        const hero = this.world.getStable(`hero_${id}`)?.combatant;
+        if (hero) {
+          m.ki = hero.ki;
+          m.rage = hero.rage;
+        }
         m.hp = s.maxHp;
-        m.ki = s.maxKi;
+        // Waking up at the checkpoint is not a free ki refill.
+        m.ki = Math.max(m.ki, s.maxKi * BALANCE.ki.afterDefeatFraction);
       }
       this.refreshHeroCombatants();
       const cp = this.checkpoint;
@@ -1176,13 +1572,18 @@ export class Game {
   }
 
   private refreshHeroCombatants(): void {
+    this.syncRosterVitals();
     for (const h of this.heroes()) {
       const m = this.roster[h.hero!.characterId];
       const c = h.combatant!;
       c.stats = computeStats(m);
       c.level = m.level;
       c.unlockedMoves = unlockedMoves(m);
+      if (m.limit) c.unlockedMoves.push(m.limit);
       c.passives = passivesOf(m);
+      c.slots = [...m.slots];
+      c.mastery = masteryOf(m);
+      c.rage = m.rage;
       c.hp = clamp(m.hp, 0, c.stats.maxHp);
       c.ki = clamp(m.ki, 0, c.stats.maxKi);
     }
@@ -1219,10 +1620,11 @@ export class Game {
     out.focus.x = l.transform.pos.x;
     out.focus.y = l.transform.pos.y + 0.6;
     out.focus.z = l.transform.pos.z;
+    const X = BALANCE.camera.exploration;
     out.yaw = 0;
-    out.pitch = 1.02;
-    out.distance = 15;
-    out.fov = 40;
+    out.pitch = X.pitch;
+    out.distance = X.distance * BALANCE.camera.zoomOut;
+    out.fov = X.fov;
     return out;
   }
 
@@ -1255,7 +1657,7 @@ export class Game {
       if (e.combatant!.state === 'DEFEATED') continue;
       spread = Math.max(spread, Math.hypot(e.transform.pos.x - fx, e.transform.pos.z - fz));
     }
-    const camRot = (this.input.held('camRight') ? 1 : 0) - (this.input.held('camLeft') ? 1 : 0);
+    const camRot = (this.held('camRight') ? 1 : 0) - (this.held('camLeft') ? 1 : 0);
     if (camRot !== 0) {
       this.combatYaw += camRot * 2.2 * TICK_DT;
       this.lastManualCamTick = this.loop.tick;
@@ -1269,10 +1671,11 @@ export class Game {
     out.focus.x = fx;
     out.focus.y = fy + 0.7;
     out.focus.z = fz;
+    const K = BALANCE.camera.combat;
     out.yaw = this.combatYaw;
-    out.pitch = 0.34;
-    out.distance = clamp(6.5 + spread * 0.85, 7, 17);
-    out.fov = 50;
+    out.pitch = K.pitch;
+    out.distance = clamp(K.base + spread * K.perSpread, K.min, K.max) * BALANCE.camera.zoomOut;
+    out.fov = K.fov;
     return out;
   }
 
@@ -1311,6 +1714,8 @@ export class Game {
     } else {
       this.explorationPose(this.desiredCam);
     }
+    const t = this.map.tiles;
+    clampFocusToMap(this.desiredCam, t.width, t.height, this.viewAspect, BALANCE.camera.edgeMargin);
     this.camera.update(this.desiredCam, TICK_DT);
   }
 
@@ -1318,6 +1723,7 @@ export class Game {
 
   pause(): void {
     if (!this.fsm.canTransition('PAUSED') || this.fsm.state === 'PAUSED') return;
+    this.endFocus(this.focus.cancel());
     this.fsm.transition('PAUSED');
     this.input.releaseAll();
     this.notify();
@@ -1327,8 +1733,7 @@ export class Game {
     if (this.fsm.state !== 'PAUSED') return;
     this.fsm.resume();
     this.input.releaseAll();
-    this.prevHeld.clear();
-    this.prevHeld.add('menu');
+    this.sim.resync();
     this.loop.reset();
     this.notify();
   }
@@ -1339,9 +1744,14 @@ export class Game {
     if (this.fsm.previous === 'WORLD_EXPLORATION' || this.fsm.state === 'WORLD_EXPLORATION') this.saveManager?.request('suspensión', true);
   }
 
+  completedQuests(): string[] {
+    return Object.keys(QUESTS).filter((id) => this.quests.get(id).status === 'completed');
+  }
+
   purchaseSkill(characterId: string, skillId: string): string | null {
     const m = this.roster[characterId];
-    const r = purchaseSkill(m, skillId);
+    this.syncRosterVitals();
+    const r = purchaseSkill(m, skillId, this.completedQuests());
     if (!r.ok) return r.reason;
     this.refreshHeroCombatants();
     this.handleQuestUpdates(this.quests.onSkillUnlocked());
@@ -1349,6 +1759,29 @@ export class Game {
     this.saveManager?.request('habilidad comprada', true);
     this.notify();
     return null;
+  }
+
+  /** Reassign a technique slot. Only outside combat; saved immediately (verified write). */
+  setSlot(characterId: string, index: number, moveId: string | null): boolean {
+    if (this.encounter) return false;
+    const m = this.roster[characterId];
+    if (!m) return false;
+    this.syncRosterVitals();
+    if (!assignSlot(m, index, moveId)) return false;
+    this.refreshHeroCombatants();
+    this.saveManager?.request('técnicas', true);
+    this.notify();
+    return true;
+  }
+
+  techniquesOf(characterId: string): { id: string; name: string; status: string; aliases: string[]; note: string; kiCost: number; sequence: FocusSymbol[] | null; description: string; world: boolean }[] {
+    const m = this.roster[characterId];
+    if (!m) return [];
+    return unlockedTechniques(m).map((id) => {
+      const mv = MOVES[id];
+      const t = mv.technique!;
+      return { id, name: mv.name, status: NAME_STATUS_LABEL[t.nameStatus], aliases: t.aliases, note: t.note, kiCost: mv.kiCost, sequence: t.sequence, description: mv.description, world: t.usableInWorld };
+    });
   }
 
   equip(characterId: string, itemId: string): boolean {
@@ -1401,10 +1834,7 @@ export class Game {
     this.partyOrder.forEach((id, i) => {
       const m = this.roster[id];
       const def = CHARACTERS[id];
-      const stats = computeStats(m);
-      const c = makeCombatant('player', def.name, m.level, stats, unlockedMoves(m), passivesOf(m), def.aiStyle, def.meteoMoveId, def.jointPartners, 0.8);
-      c.hp = m.hp;
-      c.ki = m.ki;
+      const c = heroCombatant(id, m, this.allyOrders[id] ?? 'BALANCED');
       this.world.create({
         stableId: `hero_${id}`,
         kind: 'hero',
@@ -1428,6 +1858,7 @@ export class Game {
       const m = this.roster[h.hero!.characterId];
       m.hp = h.combatant!.hp;
       m.ki = h.combatant!.ki;
+      m.rage = h.combatant!.rage;
     }
   }
 
@@ -1437,6 +1868,21 @@ export class Game {
     this.pb.add('player', amount);
     if (this.pb.dominance) this.events.emit('dominance', { team: this.pb.dominance });
     this.notify();
+  }
+
+  debugSetRage(value: number): void {
+    for (const h of this.heroes()) h.combatant!.rage = clamp(value, 0, BALANCE.rage.max);
+    this.notify();
+  }
+
+  /** Resolves one hit through the real combat path (hostility, confusion, rage). Returns HP lost. */
+  debugHit(attackerId: number, defenderId: number, moveId: string): number {
+    const a = this.world.get(attackerId);
+    const d = this.world.get(defenderId);
+    if (!a?.combatant || !d?.combatant || !MOVES[moveId]) return 0;
+    const before = d.combatant.hp;
+    this.combat.applyHit(a, d, MOVES[moveId], 1, 0, this.combatCtx(this.loop.tick));
+    return before - d.combatant.hp;
   }
 
   debugGrant(xp: number, ap: number): void {
@@ -1483,7 +1929,7 @@ export class Game {
     const leader = this.world.getStable(`hero_${this.leaderId}`);
     const pos = leader ? leader.transform.pos : vec3(this.checkpoint.x, 0, this.checkpoint.z);
     return {
-      version: 2,
+      version: 3,
       savedAt: Date.now(),
       playTimeSeconds: Math.floor(this.playTime),
       gameTime: this.gameTime,
@@ -1543,9 +1989,45 @@ export class Game {
         xpNext: xpToNextLevel(m.level),
         ap: m.ap,
         isLeader: id === this.leaderId,
+        rage: Math.floor(e?.combatant?.rage ?? m.rage),
       };
     });
     const ctl = this.controlled();
+    const actor = state === 'WORLD_EXPLORATION' || state === 'RETURN_TO_WORLD' ? this.world.getStable(`hero_${this.leaderId}`) : ctl;
+    const inFight = state === 'ACTIVE_COMBAT';
+    const slots: UiSlot[] = [];
+    const ac = actor?.combatant;
+    for (let i = 0; i < 4; i++) {
+      const id = ac?.slots[i] ?? null;
+      const mv = id ? MOVES[id] : null;
+      const t = mv?.technique;
+      const blocked = actor && id && inFight ? techniqueBlocker(actor, id, this.world) : null;
+      slots.push({
+        index: i,
+        moveId: id,
+        name: mv?.name ?? '',
+        kiCost: mv?.kiCost ?? 0,
+        cooldown: id && ac ? Math.ceil((ac.cooldowns[id] ?? 0) * TICK_DT * 10) / 10 : 0,
+        cooldownMax: mv ? mv.cooldownTicks * TICK_DT : 0,
+        affordable: !!ac && !!mv && ac.ki >= mv.kiCost,
+        usable: !!t && (inFight || t.usableInWorld) && !blocked,
+        blocked,
+        sequence: t?.sequence ?? null,
+        direct: !!t && !t.sequence,
+      });
+    }
+    const limitId = actor?.hero ? this.roster[actor.hero.characterId]?.limit : null;
+    const limitMove = limitId ? MOVES[limitId] : null;
+    const matching = new Set(this.focus.matching().map((c) => c.moveId + c.mode));
+    const focus: UiFocus = {
+      active: this.focus.active,
+      remaining: this.focus.remainingSeconds,
+      window: F.windowSeconds,
+      input: [...this.focus.input],
+      candidates: this.focus.candidates.map((c) => ({ ...c, matching: matching.has(c.moveId + c.mode) })),
+      cooldown: Math.max(0, (this.focusReadyTick - this.loop.tick) * TICK_DT),
+      ready: this.loop.tick >= this.focusReadyTick,
+    };
     const combatants: UiCombatant[] = this.engaged().map((e) => {
       const c = e.combatant!;
       return {
@@ -1561,6 +2043,7 @@ export class Game {
         controlled: e.id === this.controlledId,
         color: e.appearance?.palette.outfit ?? 0xffffff,
         transformed: c.transformed,
+        rage: Math.floor(c.rage),
       };
     });
     let prompt: string | null = null;
@@ -1587,6 +2070,15 @@ export class Game {
       previousState: this.fsm.previous,
       cameraMode: this.camera.mode,
       party,
+      slots,
+      limit: limitMove && ac ? { moveId: limitMove.id, name: limitMove.name, rage: Math.floor(ac.rage), ready: limitReady(ac), sequence: limitMove.technique!.sequence! } : null,
+      focus,
+      status: {
+        confused: ac ? ac.confusedTicks * TICK_DT : 0,
+        charging: ac?.state === 'CHARGE',
+        kaioken: ac?.buff ? ac.buff.ticksLeft * TICK_DT : 0,
+        blinded: ac ? ac.blindTicks * TICK_DT : 0,
+      },
       combatants,
       pb: { value: this.pb.value, dominance: this.pb.dominance, ticksLeft: this.pb.dominanceTicks, threshold: BALANCE.powerBalance.dominanceThreshold },
       combo: ctlC?.comboCount ?? 0,
@@ -1612,7 +2104,7 @@ export class Game {
             .filter((m) => m.command && m.kind !== 'special')
             .map((m) => ({ id: m.id, name: m.name, cooldown: ctlC.cooldowns[m.id] ?? 0, kiCost: m.kiCost, affordable: ctlC.ki >= m.kiCost }))
         : [],
-      specialReady: this.pb.dominance === 'player',
+      specialReady: !!ac && limitReady(ac),
       debug: this.settings.debug ? this.debugInfo() : null,
       playTime: Math.floor(this.playTime),
     };
@@ -1621,6 +2113,10 @@ export class Game {
   private debugInfo(): UiSnapshot['debug'] {
     const lines: string[] = [];
     lines.push(`state=${this.fsm.state} cam=${this.camera.mode} PB=${this.pb.value.toFixed(1)} dom=${this.pb.dominance ?? '-'}`);
+    const rs = this.renderStats;
+    lines.push(
+      `pantalla=${rs.screenW}x${rs.screenH} interna=${rs.internalW}x${rs.internalH} dpr=${rs.dpr.toFixed(2)} ref1080p=${rs.refScale.toFixed(2)} sprite=64x96 cámara d=${this.camera.pose.distance.toFixed(1)} fov=${this.camera.pose.fov.toFixed(0)} x${(this.timeScale).toFixed(2)}`,
+    );
     const list = this.encounter ? this.engaged() : this.heroes();
     for (const e of list) {
       const c = e.combatant!;

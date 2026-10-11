@@ -178,6 +178,14 @@ export function generateTerrainAtlas(pal = VALLEY_PALETTE): Tex {
   return { width: pc.width, height: pc.height, data: pc.toTextureData() };
 }
 
+/** Repeating forest-floor tile for the ground outside the playable map. */
+export function generateForestFloor(): Tex {
+  const pal = VALLEY_PALETTE;
+  const pc = new PixelCanvas(TILE_PX, TILE_PX);
+  noiseFill(pc, 0, 0, shade(pal.grassDark, 0.82), shade(pal.grassDark, 0.62), pal.grassDark, 99, 0.3);
+  return { width: pc.width, height: pc.height, data: pc.toTextureData() };
+}
+
 /** Two tree variants side by side (48x64 each). */
 export function generateTrees(pal = VALLEY_PALETTE): Tex {
   const pc = new PixelCanvas(96, 64);
@@ -278,6 +286,12 @@ export const FX = {
   streak: 21,
   star: 22,
   shockwave: 23,
+  disc: [24, 25],
+  beamBody: 26,
+  beamHead: 27,
+  orb: [28, 29],
+  scatter: 30,
+  flash: 31,
 } as const;
 export const FX_COLS = 8;
 export const FX_ROWS = 4;
@@ -368,8 +382,42 @@ export function generateEffects(): Tex {
     const t = (a / 80) * Math.PI * 2;
     pc.ellipse(16 + Math.cos(t) * 14, 16 + Math.sin(t) * 14, 1.6, 1.6, 0xffffff);
   }
+  // Kienzan: flat spinning disc (two frames give the spin shimmer).
+  FX.disc.forEach((i, f) => {
+    cell(i);
+    pc.ellipse(16, 16, 14, 5, 0xffd84a);
+    pc.ellipse(16, 16, 10, 3, 0xfff4b0);
+    pc.rect(f ? 6 : 20, 15, 6, 2, 0xffffff);
+  });
+  // Beam: tiling body (horizontal) and rounded head.
+  cell(FX.beamBody);
+  pc.rect(0, 4, 32, 24, 0x4aa8ff);
+  pc.rect(0, 8, 32, 16, 0x9ad8ff);
+  pc.rect(0, 12, 32, 8, 0xffffff);
+  cell(FX.beamHead);
+  pc.ellipse(16, 16, 15, 15, 0x4aa8ff);
+  pc.ellipse(16, 16, 11, 11, 0x9ad8ff);
+  pc.ellipse(16, 16, 6, 6, 0xffffff);
+  FX.orb.forEach((i, f) => {
+    cell(i);
+    pc.ellipse(16, 16, 11, 11, 0xd8f4ff);
+    pc.ellipse(16, 16, 8, 8, 0xffffff);
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * Math.PI * 2 + f * 1;
+      pc.ellipse(16 + Math.cos(a) * 9, 16 + Math.sin(a) * 9, 2.4, 2.4, 0x7ad0ff);
+    }
+  });
+  cell(FX.scatter);
+  pc.ellipse(16, 16, 7, 7, 0x6ad0ff);
+  pc.ellipse(16, 16, 4, 4, 0xffffff);
+  cell(FX.flash);
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    pc.limb(16, 16, 16 + Math.cos(a) * 15, 16 + Math.sin(a) * 15, 2, 0xffffff);
+  }
+  pc.ellipse(16, 16, 8, 8, 0xffffff);
   pc.setOrigin(0, 0, 1);
-  for (const i of [...FX.kiBall, ...FX.kiWave, ...FX.kiCharged, FX.arrow, FX.alert]) pc.outline((i % FX_COLS) * 32, Math.floor(i / FX_COLS) * 32, 32, 32, 0x1a2a4a);
+  for (const i of [...FX.kiBall, ...FX.kiWave, ...FX.kiCharged, ...FX.disc, ...FX.orb, FX.scatter, FX.arrow, FX.alert]) pc.outline((i % FX_COLS) * 32, Math.floor(i / FX_COLS) * 32, 32, 32, 0x1a2a4a);
   DIGITS.forEach((glyph, d) => {
     glyph.split(',').forEach((row, y) => {
       for (let x = 0; x < 5; x++) if (row[x] === '1') pc.px(d * 8 + 1 + x, DIGIT_ROW_Y + 1 + y, 0xffffff);

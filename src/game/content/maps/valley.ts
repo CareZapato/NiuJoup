@@ -184,7 +184,7 @@ export function buildValley(): MapDef {
         x: 18.5,
         z: 10.5,
         appearance: 'villager',
-        dialogue: ['Hay una roca agrietada al noreste, junto a los riscos.', 'Dicen que una buena Onda de Ki la haría pedazos...'],
+        dialogue: ['Hay una roca agrietada al noreste, junto a los riscos.', 'Dicen que un Kamehameha, un Kienzan o un Sōkidan la harían pedazos...'],
       },
       {
         id: 'smith',

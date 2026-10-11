@@ -37,10 +37,4 @@ export function computeDamage(move: MoveDef, atk: Stats, def: Stats, ctx: Damage
   return { damage: Math.max(1, Math.round(dmg)), crit, scaling };
 }
 
-/** Returns false if the combatant lacks Ki; otherwise deducts it. */
-export function spendKi(c: { ki: number }, cost: number): boolean {
-  if (cost <= 0) return true;
-  if (c.ki < cost) return false;
-  c.ki -= cost;
-  return true;
-}
+export { spendKi } from './ki';

@@ -1,14 +1,63 @@
 import * as THREE from 'three';
 import type { Entity } from '../../components';
 import { getMove } from '../../content/moves';
+import type { ProjectileVisual } from '../../content/types';
+import type { GameEvents } from '../../events';
 import type { Game } from '../../Game';
 import { isAttacking } from '../../systems/combat/CombatSystem';
 import { hitboxCenter } from '../../systems/collision/shapes';
 import { vec3 } from '../../core/math';
+import { BALANCE } from '../../content/balance';
 import { type Atlas, AtlasCache, appearanceFor, makeTexture } from './AtlasCache';
-import { frameAt, pickView } from './manifest';
-import { buildTerrainGeometry, treePositions, WATER_LEVEL } from './terrainMesh';
-import { DIGIT_ROW_Y, FX, FX_COLS, FX_ROWS, generateEffects, generateProps, generateTerrainAtlas, generateTrees, generateWater, PROP_CELLS, VALLEY_PALETTE } from './worldArt';
+import { ANIM_FALLBACK, frameAt, frameRect, pickView } from './manifest';
+import { buildTerrainGeometry, exteriorTreePositions, treePositions, WATER_LEVEL } from './terrainMesh';
+import { DIGIT_ROW_Y, FX, FX_COLS, FX_ROWS, generateEffects, generateForestFloor, generateProps, generateTerrainAtlas, generateTrees, generateWater, PROP_CELLS, VALLEY_PALETTE } from './worldArt';
+
+/**
+ * Focus slow-motion look: every world material gets the same two uniforms
+ * (desaturate, darken). HUD and markers are not patched and stay legible.
+ */
+const FOCUS_UNIFORMS = { uFocusDesat: { value: 0 }, uFocusDark: { value: 0 } };
+
+function patchFocus<T extends THREE.Material>(m: T): T {
+  m.onBeforeCompile = (s) => {
+    s.uniforms.uFocusDesat = FOCUS_UNIFORMS.uFocusDesat;
+    s.uniforms.uFocusDark = FOCUS_UNIFORMS.uFocusDark;
+    s.fragmentShader =
+      'uniform float uFocusDesat;\nuniform float uFocusDark;\n' +
+      s.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        '#include <dithering_fragment>\n{ float l = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114)); gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(l), uFocusDesat) * (1.0 - uFocusDark); }',
+      );
+  };
+  m.customProgramCacheKey = () => 'focus-filter';
+  return m;
+}
+
+interface Beam {
+  mesh: THREE.Mesh;
+  head: THREE.Mesh;
+  x: number;
+  y: number;
+  z: number;
+  dirX: number;
+  dirZ: number;
+  length: number;
+  width: number;
+  age: number;
+  life: number;
+}
+
+const WHITE = new THREE.Color(1, 1, 1);
+
+const PROJECTILE_FRAMES: Record<ProjectileVisual, readonly number[]> = {
+  ki_ball: FX.kiBall,
+  ki_wave: FX.kiWave,
+  ki_charged: FX.kiCharged,
+  kienzan: FX.disc,
+  sokidan: FX.orb,
+  kakusan: [FX.scatter, FX.scatter],
+};
 
 const BATTLE_STATES = new Set(['ENCOUNTER_TRANSITION', 'ACTIVE_COMBAT', 'COMBAT_VICTORY', 'COMBAT_DEFEAT']);
 
@@ -88,6 +137,7 @@ export class GameRenderer {
   private treeData: { x: number; z: number; variant: number; size: number }[] = [];
   private lastTreeYaw = NaN;
   private lastTreeStretch = NaN;
+  private lastTreeCam = { x: NaN, z: NaN };
   private propsTex: THREE.DataTexture;
   private fxTex: THREE.DataTexture;
   private terrainTex: THREE.DataTexture;
@@ -105,8 +155,16 @@ export class GameRenderer {
   private tmpS = new THREE.Vector3();
   private up = new THREE.Vector3(0, 1, 0);
   private scratch = vec3();
+  /** World clock (slowed by focus); drives water, props and effects. */
   private time = 0;
   private maxFx: number;
+  private exterior: THREE.Mesh[] = [];
+  private floorTex: THREE.DataTexture;
+  private beams: Beam[] = [];
+  private screenFlash = 0;
+  private skyBase = new THREE.Color(VALLEY_PALETTE.sky);
+  private grey = new THREE.Color();
+  private lowQuality: boolean;
 
   constructor(
     private scene: THREE.Scene,
@@ -114,7 +172,8 @@ export class GameRenderer {
     private game: Game,
     opts: RendererOptions,
   ) {
-    this.maxFx = opts.mobile || game.settings.quality === 'low' ? 60 : 140;
+    this.lowQuality = opts.mobile || game.settings.quality === 'low';
+    this.maxFx = this.lowQuality ? 60 : 140;
     scene.background = new THREE.Color(VALLEY_PALETTE.sky);
     scene.fog = new THREE.Fog(VALLEY_PALETTE.sky, 30, 80);
     this.terrainTex = makeTexture(generateTerrainAtlas());
@@ -122,15 +181,12 @@ export class GameRenderer {
     this.propsTex = makeTexture(generateProps());
     this.fxTex = makeTexture(generateEffects());
     this.waterTex = makeTexture(generateWater(), true);
+    this.floorTex = makeTexture(generateForestFloor(), true);
 
-    this.water = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: this.waterTex, color: 0xffffff }));
+    // Water only exists inside the map (rivers); outside is forest ground.
+    this.water = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), patchFocus(new THREE.MeshBasicMaterial({ map: this.waterTex, color: 0xffffff })));
     this.water.rotation.x = -Math.PI / 2;
     scene.add(this.water);
-
-    const under = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: 0x2f6a26 }));
-    under.rotation.x = -Math.PI / 2;
-    under.position.y = WATER_LEVEL - 0.05;
-    scene.add(under);
 
     const fxMat = (): THREE.MeshBasicMaterial =>
       new THREE.MeshBasicMaterial({ map: this.fxTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -146,7 +202,7 @@ export class GameRenderer {
     scene.add(this.debugGroup);
 
     for (let i = 0; i < this.maxFx; i++) {
-      const mat = fxMat();
+      const mat = patchFocus(fxMat());
       const mesh = new THREE.Mesh(makeCenteredQuad(), mat);
       mesh.visible = false;
       mesh.renderOrder = 5;
@@ -168,22 +224,48 @@ export class GameRenderer {
       this.scene.remove(t);
       t.dispose();
     }
+    for (const m of this.exterior) {
+      this.scene.remove(m);
+      m.geometry.dispose();
+    }
     const tiles = map.tiles;
     this.terrain = new THREE.Mesh(
       buildTerrainGeometry(tiles),
-      new THREE.MeshBasicMaterial({ map: this.terrainTex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide }),
+      patchFocus(new THREE.MeshBasicMaterial({ map: this.terrainTex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide })),
     );
     this.scene.add(this.terrain);
-    this.water.scale.set(tiles.width + 40, tiles.height + 40, 1);
+    this.water.scale.set(tiles.width, tiles.height, 1);
     this.water.position.set(tiles.width / 2, WATER_LEVEL, tiles.height / 2);
-    this.waterTex.repeat.set((tiles.width + 40) / 2, (tiles.height + 40) / 2);
+    this.waterTex.repeat.set(tiles.width / 2, tiles.height / 2);
 
-    this.treeData = treePositions(tiles);
+    // Exterior: a frame of forest floor around the map (never the sky colour or open water).
+    const E = 90;
+    const W = tiles.width;
+    const H = tiles.height;
+    const floorMat = patchFocus(new THREE.MeshBasicMaterial({ map: this.floorTex }));
+    const frame: [number, number, number, number][] = [
+      [-E, -E, W + E, 0],
+      [-E, H, W + E, H + E],
+      [-E, 0, 0, H],
+      [W, 0, W + E, H],
+    ];
+    this.exterior = frame.map(([x0, z0, x1, z1]) => {
+      const g = new THREE.PlaneGeometry(x1 - x0, z1 - z0);
+      const uv = g.getAttribute('uv') as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * (x1 - x0)) / 2, (uv.getY(i) * (z1 - z0)) / 2);
+      const m = new THREE.Mesh(g, floorMat);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set((x0 + x1) / 2, -0.01, (z0 + z1) / 2);
+      this.scene.add(m);
+      return m;
+    });
+
+    this.treeData = [...treePositions(tiles), ...exteriorTreePositions(tiles, this.lowQuality ? 5 : 7, this.lowQuality ? 1.8 : 1.45)];
     this.trees = [0, 1].map((variant) => {
       const count = this.treeData.filter((t) => t.variant === variant).length;
       const g = makeQuad();
       setUv(g, variant * 0.5, 0, variant * 0.5 + 0.5, 1, false);
-      const m = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ map: this.treeTex, alphaTest: 0.5 }), Math.max(1, count));
+      const m = new THREE.InstancedMesh(g, patchFocus(new THREE.MeshBasicMaterial({ map: this.treeTex, alphaTest: 0.5 })), Math.max(1, count));
       m.count = count;
       m.frustumCulled = false;
       this.scene.add(m);
@@ -192,15 +274,34 @@ export class GameRenderer {
     this.lastTreeYaw = NaN;
   }
 
+  /**
+   * Billboard trees face the camera. Trees standing in the strip just in
+   * front of the camera (below the bottom of the screen, or barely above it)
+   * are cut away: stretched for the pitch, they would otherwise cover half
+   * the view at the map edges.
+   */
   private updateTrees(yaw: number, stretch: number): void {
-    if (Math.abs(yaw - this.lastTreeYaw) < 1e-3 && Math.abs(stretch - this.lastTreeStretch) < 1e-3) return;
+    const rig = this.game.camera;
+    const cx = rig.position.x;
+    const cz = rig.position.z;
+    if (Math.abs(yaw - this.lastTreeYaw) < 1e-3 && Math.abs(stretch - this.lastTreeStretch) < 1e-3 && Math.hypot(cx - this.lastTreeCam.x, cz - this.lastTreeCam.z) < 0.2) return;
     this.lastTreeYaw = yaw;
     this.lastTreeStretch = stretch;
+    this.lastTreeCam.x = cx;
+    this.lastTreeCam.z = cz;
+    const p = rig.pose;
+    const camH = Math.max(0.5, rig.position.y - rig.lookAt.y);
+    const bottomRay = Math.min(p.pitch + (p.fov * Math.PI) / 360, Math.PI / 2 - 0.02);
+    const cut = camH / Math.tan(bottomRay) + BALANCE.render.treeCutaway;
+    const fx = -Math.sin(yaw);
+    const fz = -Math.cos(yaw);
     const counters = [0, 0];
     this.tmpQ.setFromAxisAngle(this.up, yaw);
     for (const t of this.treeData) {
+      const ahead = (t.x - cx) * fx + (t.z - cz) * fz;
       this.tmpV.set(t.x, 0, t.z);
-      this.tmpS.set(2.6 * t.size, 3.4 * t.size * stretch, 1);
+      if (ahead < cut) this.tmpS.set(0, 0, 0);
+      else this.tmpS.set(2.6 * t.size, 3.4 * t.size * stretch, 1);
       this.tmpMat.compose(this.tmpV, this.tmpQ, this.tmpS);
       this.trees[t.variant].setMatrixAt(counters[t.variant]++, this.tmpMat);
     }
@@ -344,6 +445,26 @@ export class GameRenderer {
         const l = this.game.leader();
         this.spawnFx(FX.shockwave, l.transform.pos.x, l.transform.pos.y + 0.1, l.transform.pos.z, { size: 1, grow: 14, life: 0.6, ground: true, color: 0xffffff });
       }),
+      ev.on('beamFired', (b) => {
+        this.spawnBeam(b);
+        this.spawnFx(FX.kiWave, b.x, b.y, b.z, { size: b.width * 3, grow: 1, life: 0.3, color: b.color });
+      }),
+      ev.on('flash', (f) => {
+        this.screenFlash = 0.35;
+        this.spawnFx(FX.flash, f.x, f.y, f.z, { size: 1.2, grow: f.radius * 2.5, life: 0.35, color: 0xffffff });
+      }),
+      ev.on('blinded', (b) => {
+        const e = this.game.world.get(b.entityId);
+        if (!e) return;
+        const p = e.transform.pos;
+        for (let i = 0; i < 3; i++) this.spawnFx(FX.star, p.x + (i - 1) * 0.35, p.y + 1.9, p.z, { size: 0.35, vy: 0.4, life: 0.8, color: 0xffffff });
+      }),
+      ev.on('techniqueUsed', (t) => {
+        const e = this.game.world.get(t.entityId);
+        if (!e) return;
+        const p = e.transform.pos;
+        this.spawnFx(FX.shockwave, p.x, p.y + 0.05, p.z, { size: 0.6, grow: t.limit ? 9 : 5, life: 0.35, ground: true, color: t.limit ? 0xffd84a : (e.appearance?.palette.aura ?? 0xffffff) });
+      }),
     );
   }
 
@@ -353,10 +474,10 @@ export class GameRenderer {
     let v = this.views.get(e.id);
     if (v) return v;
     const root = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5, map: this.propsTex });
+    const mat = patchFocus(new THREE.MeshBasicMaterial({ transparent: true, alphaTest: 0.5, map: this.propsTex }));
     const mesh = new THREE.Mesh(makeQuad(), mat);
     root.add(mesh);
-    const shadow = new THREE.Mesh(makeCenteredQuad(), new THREE.MeshBasicMaterial({ map: this.propsTex, transparent: true, depthWrite: false }));
+    const shadow = new THREE.Mesh(makeCenteredQuad(), patchFocus(new THREE.MeshBasicMaterial({ map: this.propsTex, transparent: true, depthWrite: false })));
     shadow.rotation.x = -Math.PI / 2;
     const cw = 32 / (8 * 32);
     const a = shadow.geometry.getAttribute('uv') as THREE.BufferAttribute;
@@ -370,7 +491,7 @@ export class GameRenderer {
     let auraMat: THREE.MeshBasicMaterial | null = null;
     let alert: THREE.Mesh | null = null;
     if (isChar) {
-      auraMat = new THREE.MeshBasicMaterial({ map: this.fxTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: e.appearance?.palette.aura ?? 0xffffff });
+      auraMat = patchFocus(new THREE.MeshBasicMaterial({ map: this.fxTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: e.appearance?.palette.aura ?? 0xffffff }));
       aura = new THREE.Mesh(makeQuad(), auraMat);
       aura.visible = false;
       aura.renderOrder = 2;
@@ -436,7 +557,7 @@ export class GameRenderer {
     v.root.position.set(x, y, z);
     v.root.rotation.y = camYaw;
     v.root.visible = s.visible && s.alpha > 0.02;
-    const ground = this.game.map.tiles.heightAt(x, z);
+    const ground = this.game.map.tiles.visualHeightAt(x, z);
     const above = Math.max(0, y - ground);
     const shadowSize = (e.body ? e.body.radius * 3 : 0.9) * Math.max(0.35, 1 - above * 0.12);
     v.shadow.position.set(x, Math.max(ground, WATER_LEVEL) + 0.03, z);
@@ -462,9 +583,12 @@ export class GameRenderer {
     const atlas: Atlas | null = this.atlases.get(s.atlas, mode);
     if (!atlas) return;
     const m = atlas.manifest;
-    const anim = m.anims[s.anim] ? s.anim : m.anims.idle ? 'idle' : (Object.keys(m.anims)[0] as typeof s.anim);
+    const fallback = ANIM_FALLBACK[s.anim];
+    const anim = m.anims[s.anim] ? s.anim : fallback && m.anims[fallback] ? fallback : m.anims.idle ? 'idle' : (Object.keys(m.anims)[0] as typeof s.anim);
     const def = m.anims[anim]!;
-    const frame = frameAt(def, s.animTicks);
+    // Technique poses follow the simulation phase (prep / release / recovery) so the release frame matches the hit.
+    const phase = anim === s.anim && s.anim.startsWith('tech_') ? s.phaseFrame : null;
+    const frame = phase != null && phase < def.frames ? phase : frameAt(def, s.animTicks);
     // Directional billboard: travel direction while dashing/flying fast, otherwise facing.
     let facing = t.yaw;
     if (e.body && (s.anim === 'fly' || s.anim === 'dash' || s.anim === 'run' || s.anim === 'walk')) {
@@ -474,12 +598,11 @@ export class GameRenderer {
     }
     const view = pickView(facing, camYaw, m.views);
     const col = m.columns[anim]! + frame;
-    const W = m.totalColumns * m.frameWidth;
-    const H = m.views.length * m.frameHeight;
-    const u0 = (col * m.frameWidth) / W;
-    const u1 = ((col + 1) * m.frameWidth) / W;
-    const v1 = 1 - (view.row * m.frameHeight) / H;
-    const v0 = 1 - ((view.row + 1) * m.frameHeight) / H;
+    const r = frameRect(m, col, view.row);
+    const u0 = r.x / r.atlasW;
+    const u1 = (r.x + m.frameWidth) / r.atlasW;
+    const v1 = 1 - r.y / r.atlasH;
+    const v0 = 1 - (r.y + m.frameHeight) / r.atlasH;
     const key = `${atlas.manifest.id}:${col}:${view.row}:${view.mirror}`;
     if (v.atlasKey !== key) {
       v.atlasKey = key;
@@ -493,12 +616,15 @@ export class GameRenderer {
     v.mesh.scale.set(h * (m.frameWidth / m.frameHeight), h * stretch, 1);
     const flash = s.flashTicks > 0 ? (this.game.settings.reduceFlashes ? 1.5 : 3) : 1;
     const tf = s.transformed ? 1.25 : 1;
-    v.mat.color.setRGB(flash * tf, flash * (s.transformed ? 1.15 : 1), flash);
+    // Kaioken strain: pulsing red tint on the body.
+    const strain = s.strain ? 0.18 + Math.sin(this.time * 9) * 0.1 : 0;
+    v.mat.color.setRGB(flash * tf * (1 + strain), flash * (s.transformed ? 1.15 : 1) * (1 - strain), flash * (1 - strain));
     v.mat.opacity = s.alpha;
     if (v.aura && v.auraMat) {
-      v.aura.visible = s.aura;
-      if (s.aura) {
-        v.auraMat.color.set(s.transformed ? 0xffe04a : (e.appearance?.palette.aura ?? 0xffffff));
+      const auraOn = s.aura || s.auraColor != null;
+      v.aura.visible = auraOn;
+      if (auraOn) {
+        v.auraMat.color.set(s.auraColor ?? (s.transformed ? 0xffe04a : (e.appearance?.palette.aura ?? 0xffffff)));
         v.auraMat.opacity = 0.55 + Math.sin(this.time * 20) * 0.2;
         v.aura.scale.set(h * 1.25, h * stretch * 1.25 * (1 + Math.sin(this.time * 14) * 0.05), 1);
         v.aura.position.set(0, -0.1, -0.08);
@@ -514,13 +640,17 @@ export class GameRenderer {
 
   // ------------------------------------------------------------ frame
 
-  sync(alpha: number, dt: number): void {
+  sync(alpha: number, realDt: number): void {
+    const g = this.game;
+    // World visuals share the simulation's time scale (focus slow motion).
+    const dt = realDt * g.timeScale;
     this.time += dt;
     this.buildMap();
     this.atlases.pump();
-    const g = this.game;
+    g.viewAspect = this.camera.aspect;
     const rig = g.camera;
-    rig.resolve((x, z) => g.map.tiles.heightAt(x, z));
+    rig.resolve((x, z) => g.map.tiles.visualHeightAt(x, z));
+    this.applyFocusLook(g.focusFilter, realDt);
     this.camera.position.set(rig.position.x, rig.position.y, rig.position.z);
     this.camera.lookAt(rig.lookAt.x, rig.lookAt.y, rig.lookAt.z);
     if (Math.abs(this.camera.fov - rig.pose.fov) > 0.01) {
@@ -551,20 +681,24 @@ export class GameRenderer {
       let pv = this.projViews.get(e.id);
       const pr = e.projectile!;
       if (!pv) {
-        const mat = new THREE.MeshBasicMaterial({ map: this.fxTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+        const mat = patchFocus(new THREE.MeshBasicMaterial({ map: this.fxTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
         const mesh = new THREE.Mesh(makeCenteredQuad(), mat);
         mesh.renderOrder = 6;
         this.scene.add(mesh);
-        pv = { mesh, mat, frames: pr.visual === 'ki_wave' ? FX.kiWave : pr.visual === 'ki_charged' ? FX.kiCharged : FX.kiBall };
+        pv = { mesh, mat, frames: PROJECTILE_FRAMES[pr.visual as ProjectileVisual] ?? FX.kiBall };
         this.projViews.set(e.id, pv);
       }
       const t = e.transform;
       pv.mesh.position.set(t.prev.x + (t.pos.x - t.prev.x) * alpha, t.prev.y + (t.pos.y - t.prev.y) * alpha, t.prev.z + (t.pos.z - t.prev.z) * alpha);
       pv.mesh.quaternion.copy(this.camera.quaternion);
-      const sz = pr.radius * 3;
-      pv.mesh.scale.set(sz, sz, 1);
-      this.setFxUv(pv.mesh.geometry, pv.frames[Math.floor(this.time * 12) % pv.frames.length]);
-      if (Math.random() < 0.3) this.spawnFx(FX.dust, pv.mesh.position.x, pv.mesh.position.y, pv.mesh.position.z, { size: sz * 0.5, life: 0.2, color: 0x9ad8ff });
+      const disc = pr.visual === 'kienzan';
+      const sz = pr.radius * (disc ? 4 : 3);
+      pv.mesh.scale.set(sz, disc ? sz * 0.8 : sz, 1);
+      this.setFxUv(pv.mesh.geometry, pv.frames[Math.floor(this.time * (disc ? 24 : 12)) % pv.frames.length]);
+      const trail = pr.visual === 'kienzan' ? 0xffe07a : pr.visual === 'sokidan' ? 0xd8f4ff : 0x9ad8ff;
+      if (Math.random() < (pr.visual === 'sokidan' ? 0.6 : 0.3) * Math.min(1, g.timeScale * 2)) {
+        this.spawnFx(FX.dust, pv.mesh.position.x, pv.mesh.position.y, pv.mesh.position.z, { size: sz * 0.5, life: 0.2, color: trail });
+      }
     }
     for (const [id, pv] of [...this.projViews]) {
       if (pseen.has(id)) continue;
@@ -575,8 +709,80 @@ export class GameRenderer {
     }
 
     this.updateFx(dt);
+    this.updateBeams(dt);
     this.updateMarkers(battle, alpha);
     this.updateDebug(battle);
+  }
+
+  /** Desaturate + darken the world (not the HUD) while focus is active. */
+  private applyFocusLook(k: number, realDt: number): void {
+    const f = BALANCE.focus;
+    FOCUS_UNIFORMS.uFocusDesat.value = f.desaturate * k;
+    FOCUS_UNIFORMS.uFocusDark.value = f.darken * k;
+    // Short white flash from Taiyōken; softened when reduceFlashes is on.
+    const flashK = this.screenFlash > 0 ? Math.min(1, this.screenFlash * 4) * (this.game.settings.reduceFlashes ? 0.35 : 0.9) : 0;
+    this.screenFlash = Math.max(0, this.screenFlash - realDt);
+    // Fog stays unfiltered: the shader patch already filters fogged fragments, so they match the filtered sky.
+    const fog = (this.scene.fog as THREE.Fog).color;
+    fog.copy(this.skyBase);
+    if (flashK > 0) fog.lerp(WHITE, flashK);
+    const bg = this.scene.background as THREE.Color;
+    bg.copy(fog);
+    const l = bg.r * 0.299 + bg.g * 0.587 + bg.b * 0.114;
+    bg.lerp(this.grey.setRGB(l, l, l), f.desaturate * k).multiplyScalar(1 - f.darken * k);
+  }
+
+  private spawnBeam(b: GameEvents['beamFired']): void {
+    const mk = (cell: number): THREE.Mesh => {
+      const mat = patchFocus(new THREE.MeshBasicMaterial({ map: this.fxTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: b.color, side: THREE.DoubleSide }));
+      const g = new THREE.PlaneGeometry(1, 1);
+      this.setFxUv(g, cell);
+      const m = new THREE.Mesh(g, mat);
+      m.renderOrder = 7;
+      this.scene.add(m);
+      return m;
+    };
+    this.beams.push({ mesh: mk(FX.beamBody), head: mk(FX.beamHead), x: b.x, y: b.y, z: b.z, dirX: b.dirX, dirZ: b.dirZ, length: b.length, width: b.width, age: 0, life: Math.max(0.15, b.ticks / 60) });
+  }
+
+  private updateBeams(dt: number): void {
+    const camPos = this.camera.position;
+    const axis = new THREE.Vector3();
+    const toCam = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const basis = new THREE.Matrix4();
+    for (let i = this.beams.length - 1; i >= 0; i--) {
+      const b = this.beams[i]!;
+      b.age += dt;
+      if (b.age >= b.life) {
+        for (const m of [b.mesh, b.head]) {
+          this.scene.remove(m);
+          m.geometry.dispose();
+          (m.material as THREE.Material).dispose();
+        }
+        this.beams.splice(i, 1);
+        continue;
+      }
+      // Grows out over the first 15% of its life, then thins out at the end.
+      const k = b.age / b.life;
+      const reach = b.length * Math.min(1, k / 0.15);
+      const thick = b.width * 2 * (k > 0.75 ? 1 - (k - 0.75) / 0.25 : 1) * (1 + Math.sin(this.time * 40) * 0.06);
+      axis.set(b.dirX, 0, b.dirZ).normalize();
+      const cx = b.x + axis.x * reach * 0.5;
+      const cz = b.z + axis.z * reach * 0.5;
+      // Rotate the quad around its long axis so its face points at the camera.
+      toCam.set(camPos.x - cx, camPos.y - b.y, camPos.z - cz);
+      n.copy(toCam).addScaledVector(axis, -toCam.dot(axis)).normalize();
+      up.crossVectors(n, axis).normalize();
+      basis.makeBasis(axis, up, n);
+      b.mesh.quaternion.setFromRotationMatrix(basis);
+      b.mesh.position.set(cx, b.y, cz);
+      b.mesh.scale.set(Math.max(0.01, reach), thick, 1);
+      b.head.position.set(b.x + axis.x * reach, b.y, b.z + axis.z * reach);
+      b.head.quaternion.copy(this.camera.quaternion);
+      b.head.scale.set(thick * 1.5, thick * 1.5, 1);
+    }
   }
 
   private updateFx(dt: number): void {
@@ -670,5 +876,9 @@ export class GameRenderer {
     this.propsTex.dispose();
     this.fxTex.dispose();
     this.waterTex.dispose();
+    this.floorTex.dispose();
+    for (const m of this.exterior) m.geometry.dispose();
+    for (const b of this.beams) for (const m of [b.mesh, b.head]) m.geometry.dispose();
+    this.beams = [];
   }
 }

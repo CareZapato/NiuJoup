@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES } from '../../content/characters';
 import type { AppearanceDef } from '../../content/types';
 import { generateCharacterAtlas } from './characterArt';
+import { generateHeroAtlas, isHeroAppearance } from './heroArt';
 import type { SpriteManifest } from './manifest';
 import type { Tex } from './worldArt';
 
@@ -44,23 +45,29 @@ export class AtlasCache {
   }
 
   get(atlasId: string, mode: 'world' | 'battle'): Atlas | null {
-    const k = this.key(atlasId, mode);
-    let a = this.cache.get(k);
-    if (a) return a;
     const app = appearanceFor(atlasId);
     if (!app) return null;
-    const gen = generateCharacterAtlas(atlasId, app, mode);
-    a = { texture: makeTexture(gen), manifest: gen.manifest };
+    // Heroes use one detailed atlas for both modes.
+    const k = isHeroAppearance(app) ? `${atlasId}|hero` : this.key(atlasId, mode);
+    let a = this.cache.get(k);
+    if (a) return a;
+    const gen = isHeroAppearance(app) ? generateHeroAtlas(atlasId, app) : generateCharacterAtlas(atlasId, app, mode);
+    const texture = makeTexture(gen);
+    // Linear minification keeps 96 px sprites stable (no shimmer) when drawn smaller; magnification stays nearest.
+    if (isHeroAppearance(app)) texture.minFilter = THREE.LinearFilter;
+    a = { texture, manifest: gen.manifest };
     this.cache.set(k, a);
     return a;
   }
 
   has(atlasId: string, mode: 'world' | 'battle'): boolean {
-    return this.cache.has(this.key(atlasId, mode));
+    const app = appearanceFor(atlasId);
+    return this.cache.has(app && isHeroAppearance(app) ? `${atlasId}|hero` : this.key(atlasId, mode));
   }
 
   prefetch(atlasId: string, mode: 'world' | 'battle'): void {
-    const k = this.key(atlasId, mode);
+    const app = appearanceFor(atlasId);
+    const k = app && isHeroAppearance(app) ? `${atlasId}|hero` : this.key(atlasId, mode);
     if (!this.cache.has(k) && !this.queue.includes(k)) this.queue.push(k);
   }
 
@@ -68,8 +75,8 @@ export class AtlasCache {
   pump(): boolean {
     const k = this.queue.shift();
     if (!k) return false;
-    const [atlasId, mode] = k.split('|') as [string, 'world' | 'battle'];
-    this.get(atlasId, mode);
+    const [atlasId, mode] = k.split('|') as [string, 'world' | 'battle' | 'hero'];
+    this.get(atlasId, mode === 'hero' ? 'battle' : mode);
     return true;
   }
 

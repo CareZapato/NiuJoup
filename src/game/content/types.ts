@@ -43,6 +43,8 @@ export interface Hitbox {
 
 export type MoveKind = 'light' | 'heavy' | 'ki' | 'special' | 'rush' | 'launcher';
 
+export type ProjectileVisual = 'ki_ball' | 'ki_wave' | 'ki_charged' | 'kienzan' | 'sokidan' | 'kakusan';
+
 export interface ProjectileDef {
   speed: number;
   radius: number;
@@ -51,7 +53,68 @@ export interface ProjectileDef {
   homing: number;
   /** Breaks world obstacles flagged as `kiBreakable`. */
   breaksObstacles: boolean;
-  visual: 'ki_ball' | 'ki_wave' | 'ki_charged';
+  visual: ProjectileVisual;
+  /** Weaving amplitude (units) for guided spheres that change trajectory. */
+  weave?: number;
+  /** Projectiles stop when they hit terrain unless this is false. */
+  stopsOnTerrain?: boolean;
+}
+
+/**
+ * Symbols of a focus sequence. Directions are relative to the target on
+ * screen and fixed when the sequence starts: F toward, B away, U up, D down.
+ * P = punch button (light), K = ki button.
+ */
+export type FocusSymbol = 'F' | 'B' | 'U' | 'D' | 'P' | 'K' | 'H' | 'G';
+
+/** How a technique picks and hits targets. Every number is per cast. */
+export interface TargetingDef {
+  shape: 'single' | 'line' | 'circle' | 'spread' | 'guided' | 'self';
+  range: number;
+  /** Line half-width or circle radius depending on shape. */
+  width: number;
+  maxTargets: number;
+  requireLineOfSight: boolean;
+  /** Total impacts the cast may deal (all targets together). */
+  maxImpacts: number;
+  /** Same target may be hit again only after this many ticks (0 = once per cast). */
+  rehitTicks: number;
+  onTargetDeath: 'retarget' | 'continue' | 'fizzle';
+  /** Fraction of a boss's max HP one impact may remove (techniques never execute bosses). */
+  bossImpactCap?: number;
+}
+
+export type TechniqueEffect = 'beam' | 'disc' | 'flash' | 'scatter' | 'guided' | 'rush' | 'buff' | 'teleport' | 'barrage';
+export type TechniquePose = 'kamehameha' | 'kienzan' | 'taiyoken' | 'sokidan' | 'wolf_fang' | 'kaioken' | 'teleport' | 'barrage' | 'scatter';
+
+/**
+ * Metadata for named techniques. `nameStatus` separates canonical technique
+ * names from game adaptations and from purely descriptive names so the UI
+ * never presents an invented name as canon.
+ */
+export interface TechniqueDef {
+  nameStatus: 'canon' | 'adaptation' | 'descriptive';
+  /** Original/romanized name and known translations (for docs and UI tooltips). */
+  aliases: string[];
+  note: string;
+  slot: 'ability' | 'limit';
+  /** null = direct activation (utility). Offensive specials always have one. */
+  sequence: FocusSymbol[] | null;
+  /** Alternative sequence with a different targeting mode (e.g. concentrated limit). */
+  altSequence?: { sequence: FocusSymbol[]; mode: 'concentrate'; label: string };
+  effect: TechniqueEffect;
+  pose: TechniquePose;
+  targeting: TargetingDef;
+  usableInWorld: boolean;
+  /** Number of sub-projectiles / beam ticks / rush impacts. */
+  count?: number;
+  /** Ticks between sub-impacts or sub-projectiles. */
+  interval?: number;
+  /** Buff-type techniques. */
+  buff?: { durationTicks: number; attackMultiplier: number; speedMultiplier: number; kiDrainPerSecond: number; hpDrainPerSecond: number };
+  /** Status applied on hit (Taiyōken). */
+  blindTicks?: number;
+  bossBlindTicks?: number;
 }
 
 export interface MoveDef {
@@ -89,6 +152,7 @@ export interface MoveDef {
   /** Skill id that unlocks this move, or null if innate. */
   unlockedBy: string | null;
   description: string;
+  technique?: TechniqueDef;
 }
 
 export type AiStyle = 'balanced' | 'rushdown' | 'zoner' | 'tank' | 'brute';
@@ -105,16 +169,23 @@ export interface Palette {
 
 export interface AppearanceDef {
   palette: Palette;
-  hairStyle: 'spiky' | 'ponytail' | 'bald' | 'mohawk' | 'leaf' | 'bandana' | 'stone';
-  build: 'normal' | 'slim' | 'broad' | 'huge';
+  hairStyle: 'spiky' | 'ponytail' | 'bald' | 'mohawk' | 'leaf' | 'bandana' | 'stone' | 'goku' | 'krillin' | 'yamcha';
+  build: 'normal' | 'slim' | 'broad' | 'huge' | 'short';
   scale: number;
+  /** Hero sprites use the detailed 96 px generator. */
+  hero?: 'goku' | 'krillin' | 'yamcha';
 }
 
 export interface CharacterDef {
   id: string;
   name: string;
-  archetype: 'Guerrero equilibrado' | 'Luchador ágil' | 'Especialista en Ki' | 'Luchador defensivo';
+  archetype: string;
   description: string;
+  /** Technique ids equipped in the four ability slots on a new game. */
+  startingSlots: (string | null)[];
+  limitMoveId: string;
+  /** Techniques that must always remain obtainable (never locked out by branches). */
+  mandatoryTechniques: string[];
   baseStats: Stats;
   growth: Partial<Record<StatKey, number>>;
   appearance: AppearanceDef;
@@ -161,6 +232,12 @@ export interface SkillDef {
   /** Displayed command hint. */
   command?: string;
   evolvesTo?: string;
+  /** Technique mastery: each level multiplies damage and shortens cooldown. */
+  masteryOf?: string;
+  /** Extra unlock requirement besides level/AP. */
+  requiresQuest?: string;
+  /** Advanced progression shown in the tree but not playable in this build. */
+  unavailable?: string;
 }
 
 export interface SkillTreeDef {

@@ -25,6 +25,11 @@ export interface SpriteManifest {
   /** Column offset of each animation's first frame (computed). */
   columns: Partial<Record<AnimId, number>>;
   totalColumns: number;
+  /**
+   * Columns per block. Long strips wrap into stacked blocks of `views.length`
+   * rows so atlases stay within mobile texture limits (2048 px wide).
+   */
+  gridColumns: number;
   /** Hurtbox in pixels relative to pivot, for authoring/validation tools. */
   hurtbox: { width: number; height: number };
 }
@@ -59,6 +64,8 @@ export const BATTLE_ANIMS: Partial<Record<AnimId, AnimDef>> = {
   victory: { frames: 2, fps: 3, loop: true },
 };
 
+export const MAX_ATLAS_WIDTH = 2048;
+
 export function buildManifest(id: string, fw: number, fh: number, views: ViewId[], anims: Partial<Record<AnimId, AnimDef>>): SpriteManifest {
   const columns: Partial<Record<AnimId, number>> = {};
   let col = 0;
@@ -66,8 +73,40 @@ export function buildManifest(id: string, fw: number, fh: number, views: ViewId[
     columns[k] = col;
     col += a.frames;
   }
-  return { id, frameWidth: fw, frameHeight: fh, pivot: { x: fw / 2, y: fh - 2 }, views, anims, columns, totalColumns: col, hurtbox: { width: fw * 0.4, height: fh * 0.9 } };
+  const gridColumns = Math.min(col, Math.floor(MAX_ATLAS_WIDTH / fw));
+  return { id, frameWidth: fw, frameHeight: fh, pivot: { x: fw / 2, y: fh - 2 }, views, anims, columns, totalColumns: col, gridColumns, hurtbox: { width: fw * 0.4, height: fh * 0.9 } };
 }
+
+/** Pixel rectangle of one frame inside a (possibly wrapped) atlas. */
+export function frameRect(m: SpriteManifest, col: number, viewRow: number): { x: number; y: number; atlasW: number; atlasH: number } {
+  // Older exported manifests have no gridColumns: they are a single unwrapped strip.
+  const grid = m.gridColumns || m.totalColumns;
+  const blocks = Math.ceil(m.totalColumns / grid);
+  const block = Math.floor(col / grid);
+  return {
+    x: (col % grid) * m.frameWidth,
+    y: (block * m.views.length + viewRow) * m.frameHeight,
+    atlasW: grid * m.frameWidth,
+    atlasH: blocks * m.views.length * m.frameHeight,
+  };
+}
+
+/** Animations a simpler atlas may lack, with the closest substitute. */
+export const ANIM_FALLBACK: Partial<Record<AnimId, AnimId>> = {
+  idle_wait: 'idle',
+  stance: 'idle',
+  pickup: 'interact',
+  dodge: 'dash',
+  confused: 'hit',
+  fall: 'knockback',
+  tech_kamehameha: 'special',
+  tech_kienzan: 'special',
+  tech_taiyoken: 'special',
+  tech_sokidan: 'kiblast',
+  tech_wolf_fang: 'punch',
+  tech_kaioken: 'charge',
+  tech_barrage: 'kiblast',
+};
 
 /** Frame index for an animation at a given tick count (60 ticks/s). */
 export function frameAt(a: AnimDef, ticks: number): number {

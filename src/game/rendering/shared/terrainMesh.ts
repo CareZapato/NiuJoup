@@ -194,6 +194,31 @@ export function buildTerrainGeometry(map: TileMap): THREE.BufferGeometry {
   return g;
 }
 
+/**
+ * Dense forest ring just outside the map so the world edge reads as more
+ * forest (never sky or water) from any camera angle. Deterministic.
+ */
+export function exteriorTreePositions(map: TileMap, band: number, spacing: number): { x: number; z: number; variant: number; size: number }[] {
+  const out: { x: number; z: number; variant: number; size: number }[] = [];
+  const W = map.width;
+  const H = map.height;
+  for (let z = -band; z < H + band; z += spacing) {
+    for (let x = -band; x < W + band; x += spacing) {
+      const inside = x >= 0 && x < W && z >= 0 && z < H;
+      if (inside) continue;
+      const h = hash2(Math.round(x * 7) + 101, Math.round(z * 7) + 57);
+      const out1 = Math.max(-x, x - W, -z, z - H, 0);
+      out.push({
+        x: x + (h - 0.5) * spacing * 0.7,
+        z: z + (hash2(Math.round(z * 5), Math.round(x * 5)) - 0.5) * spacing * 0.7,
+        variant: h < 0.5 ? 0 : 1,
+        size: 1.2 + h * 0.35 + out1 * 0.06,
+      });
+    }
+  }
+  return out;
+}
+
 export function treePositions(map: TileMap): { x: number; z: number; variant: number; size: number }[] {
   const out: { x: number; z: number; variant: number; size: number }[] = [];
   for (let z = 0; z < map.height; z++)

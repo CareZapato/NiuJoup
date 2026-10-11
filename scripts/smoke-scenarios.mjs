@@ -130,7 +130,219 @@ async function newGame(page, shot) {
   await page.waitForTimeout(1200);
 }
 
+/** [assist] Moves the whole party next to a map position (diagnostics only). */
+function placeParty(page, x, z) {
+  return G(
+    page,
+    ({ x, z }) => {
+      const g = window.__legends;
+      g.heroes().forEach((h, i) => {
+        h.transform.pos.x = h.transform.prev.x = x + i * 0.4;
+        h.transform.pos.z = h.transform.prev.z = z + i * 0.4;
+        h.transform.pos.y = h.transform.prev.y = g.map.tiles.heightAt(h.transform.pos.x, h.transform.pos.z);
+      });
+    },
+    { x, z },
+  );
+}
+
+/** Real multitouch through CDP: each finger has its own id and can be released independently. */
+async function touchDriver(page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  const points = new Map();
+  const list = () => [...points].map(([id, p]) => ({ x: p.x, y: p.y, id, radiusX: 4, radiusY: 4, force: 1 }));
+  const send = (type, touchPoints = list()) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+  return {
+    async down(id, x, y) {
+      points.set(id, { x, y });
+      await send('touchStart');
+    },
+    async move(id, x, y) {
+      points.set(id, { x, y });
+      await send('touchMove');
+    },
+    async up(id) {
+      // Chromium releases exactly the points listed in touchEnd; the others stay down.
+      const p = points.get(id);
+      points.delete(id);
+      await send('touchEnd', [{ x: p.x, y: p.y, id, radiusX: 4, radiusY: 4, force: 1 }]);
+    },
+  };
+}
+
+async function center(page, testId) {
+  const b = await page.getByTestId(testId).boundingBox();
+  if (!b) throw new Error(`control ${testId} not visible`);
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+}
+
+const held = (page) => G(page, () => window.__legends.input.heldActions());
+const stickNow = (page) => G(page, () => ({ ...window.__legends.input.touchStick }));
+
+/** [assist] Freeze every engaged combatant except the controlled one (keeps timing checks deterministic). */
+function freezeOthers(page) {
+  return G(page, () => {
+    const g = window.__legends;
+    const me = g.controlled();
+    for (const e of g.world.query('combatant')) if (e.combatant.engaged && e !== me) e.combatant.confusedTicks = 1e7;
+  });
+}
+
 export const scenarios = {
+  /** Multitouch, simultaneous keys, key repeat, blur release and the focus window timing. */
+  async controls({ page, shot }) {
+    const R = [];
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.evaluate(() => localStorage.setItem('legends.settings', JSON.stringify({ touchControls: 'on' })));
+    await page.reload();
+    await newGame(page, shot);
+    const touch = await touchDriver(page);
+    await shot('c1-touch-exploration');
+
+    // Exploration: finger 1 on the joystick, finger 2 holds "up"; releasing one keeps the other.
+    const p0 = await leaderPos(page);
+    await touch.down(1, 120, 300);
+    for (let i = 1; i <= 6; i++) await touch.move(1, 120 + i * 10, 300);
+    const up = await center(page, 'ctl-up');
+    await touch.down(2, up.x, up.y);
+    await page.waitForTimeout(250);
+    let h = await held(page);
+    let st = await stickNow(page);
+    check(h.includes('up') && st.x > 0.5, `multitáctil: joystick (x=${st.x.toFixed(2)}) y botón "subir" a la vez (${h.join(',')})`, R);
+    await touch.up(2);
+    await page.waitForTimeout(150);
+    h = await held(page);
+    st = await stickNow(page);
+    check(!h.includes('up') && st.x > 0.5, 'soltar el botón no suelta el joystick', R);
+    await page.waitForTimeout(600);
+    await touch.up(1);
+    await page.waitForTimeout(150);
+    const p1 = await leaderPos(page);
+    st = await stickNow(page);
+    check(p1.x - p0.x > 1 && st.x === 0 && st.y === 0, `el joystick movió al líder (${p0.x.toFixed(1)} -> ${p1.x.toFixed(1)}) y vuelve a reposo al soltar`, R);
+
+    // Technique loadout editor in the pause menu (UI clicks), saved through SaveManager.
+    await tap(page, 'Escape');
+    await waitState(page, 'PAUSED');
+    await page.getByTestId('tab-techniques').click();
+    await page.getByTestId('slot-1').click();
+    const savedBefore = await G(page, () => window.__legends.saveManager.lastSavedAt);
+    const target = await G(page, () => window.__legends.techniquesOf(window.__legends.leaderId)[0]?.id ?? null);
+    await page.getByTestId(`assign-${target}`).click();
+    await page.waitForFunction((t) => window.__legends.saveManager.lastSavedAt > t && window.__legends.saveManager.lastSaveOk === true, savedBefore, { timeout: 5000 });
+    const slotsNow = await G(page, () => window.__legends.roster[window.__legends.leaderId].slots);
+    const stored = await G(page, () => {
+      const g = window.__legends;
+      const env = JSON.parse(localStorage.getItem('legends.save.main') ?? '{}');
+      return JSON.parse(env.payload ?? '{}').roster?.[g.leaderId]?.slots ?? null;
+    });
+    check(slotsNow[1] === target && JSON.stringify(stored) === JSON.stringify(slotsNow), `editor de técnicas: ${target} en la ranura 2 y guardado verificado (${JSON.stringify(slotsNow)})`, R);
+    await shot('c1b-techniques-tab');
+    await page.getByTestId('btn-resume').click();
+    await waitState(page, 'WORLD_EXPLORATION');
+
+    // Combat: joystick + guard held simultaneously, independent release.
+    console.log('[assist] debugEncounter()');
+    await G(page, () => window.__legends.debugEncounter());
+    await waitState(page, 'ACTIVE_COMBAT', 6000);
+    await freezeOthers(page);
+    await page.waitForTimeout(400);
+    await shot('c2-touch-combat');
+    const guard = await center(page, 'ctl-guard');
+    await touch.down(3, 110, 300);
+    await touch.move(3, 170, 300);
+    await touch.down(4, guard.x, guard.y);
+    await page.waitForTimeout(200);
+    h = await held(page);
+    st = await stickNow(page);
+    check(h.includes('guard') && st.x > 0.5, `combate: moverse y defender con dos dedos (${h.join(',')}, stick ${st.x.toFixed(2)})`, R);
+    await touch.up(3);
+    await page.waitForTimeout(120);
+    h = await held(page);
+    st = await stickNow(page);
+    check(h.includes('guard') && st.x === 0, 'soltar el joystick mantiene la defensa', R);
+    await touch.up(4);
+    await page.waitForTimeout(120);
+    check(!(await held(page)).includes('guard'), 'soltar el dedo de defensa la suelta', R);
+
+    // Keyboard: simultaneous keys, repeat ignored, blur releases everything.
+    await page.keyboard.down('KeyD');
+    await page.keyboard.down('KeyU');
+    await page.waitForTimeout(150);
+    h = await held(page);
+    check(h.includes('stickRight') && h.includes('guard'), `teclado: D + U a la vez (${h.join(',')})`, R);
+    const before = await G(page, () => window.__legends.input.pressCount('light'));
+    await page.keyboard.down('KeyJ');
+    await page.keyboard.down('KeyJ');
+    await page.keyboard.down('KeyJ');
+    const after = await G(page, () => window.__legends.input.pressCount('light'));
+    check(after - before === 1, `la repetición automática de tecla no genera pulsaciones (${after - before})`, R);
+    await G(page, () => window.dispatchEvent(new Event('blur')));
+    await page.waitForTimeout(100);
+    h = await held(page);
+    check(h.length === 0, `perder el foco de la ventana suelta todas las teclas (${h.join(',') || 'ninguna'})`, R);
+    await page.keyboard.up('KeyJ');
+    await page.keyboard.up('KeyU');
+    await page.keyboard.up('KeyD');
+
+    // Focus: 0.2x world, gray filter, exactly 3 real seconds.
+    await page.waitForTimeout(300);
+    await tap(page, 'KeyF', 40);
+    const t0 = Date.now();
+    await page.waitForFunction(() => window.__legends.focus.active, null, { timeout: 2000 });
+    await page.waitForTimeout(400);
+    const mid = await G(page, () => ({ ts: window.__legends.timeScale, filter: window.__legends.focusFilter }));
+    await shot('c3-focus-filter');
+    check(mid.ts === 0.2 && mid.filter > 0.9, `concentración: mundo a x${mid.ts} y filtro gris ${mid.filter.toFixed(2)}`, R);
+    await page.waitForFunction(() => !window.__legends.focus.active, null, { timeout: 6000 });
+    const secs = (Date.now() - t0) / 1000;
+    check(secs > 2.7 && secs < 3.7, `la ventana dura ~3 s reales (${secs.toFixed(2)} s medidos con sondeo)`, R);
+    await page.waitForTimeout(400);
+    const end = await G(page, () => ({ ts: window.__legends.timeScale, filter: window.__legends.focusFilter, confused: window.__legends.controlled().combatant.confusedTicks }));
+    check(end.ts === 1 && end.filter < 0.05, `al terminar se restaura el tiempo (x${end.ts}) y el filtro (${end.filter.toFixed(2)})`, R);
+    check(end.confused > 0, `agotar la ventana sin secuencia aplica "Confundido" (${end.confused} ticks)`, R);
+    await shot('c4-after-focus');
+
+    const failed = R.filter((r) => !r.ok);
+    console.log(`\nRESUMEN: ${R.length - failed.length}/${R.length} comprobaciones OK`);
+    if (failed.length) throw new Error(`Fallaron: ${failed.map((f) => f.label).join('; ')}`);
+  },
+
+  /** Edges on a phone-sized landscape viewport. */
+  async edgesMobile(ctx) {
+    await ctx.page.setViewportSize({ width: 844, height: 390 });
+    await scenarios.edges(ctx);
+  },
+
+  /** Diagnostic: the camera at the four map corners, exploring and fighting. */
+  async edges({ page, shot }) {
+    await newGame(page, shot);
+    const corners = [
+      ['nw', 3.5, 3.5],
+      ['ne', 59.5, 17.5],
+      ['sw', 3.5, 44.5],
+      ['se', 61.5, 46.5],
+    ];
+    for (const [name, x, z] of corners) {
+      console.log(`[assist] party -> ${name} (${x}, ${z})`);
+      await placeParty(page, x, z);
+      await page.waitForTimeout(1500);
+      const cam = await G(page, () => ({ ...window.__legends.camera.pose.focus, d: window.__legends.camera.pose.distance }));
+      console.log(`      camera focus (${cam.x.toFixed(1)}, ${cam.z.toFixed(1)}) dist ${cam.d.toFixed(1)}`);
+      await shot(`edge-${name}`);
+    }
+    console.log('[assist] combat at the north-west corner');
+    await placeParty(page, 3.5, 3.5);
+    await page.waitForTimeout(800);
+    await G(page, () => window.__legends.debugEncounter());
+    await page.waitForTimeout(300);
+    await shot('edge-nw-transition');
+    await waitState(page, 'ACTIVE_COMBAT', 8000);
+    await page.waitForTimeout(800);
+    await shot('edge-nw-combat');
+  },
+
   /** Diagnostic: AI-only encounter timeline (player idle). */
   async combatlog({ page, shot }) {
     await newGame(page, shot);
@@ -166,11 +378,18 @@ export const scenarios = {
     await page.reload();
     await newGame(page, shot);
     await shot('m1-touch-hud');
+    const touch = await touchDriver(page);
+    const tapControl = async (id) => {
+      const c = await center(page, id);
+      await touch.down(9, c.x, c.y);
+      await page.waitForTimeout(60);
+      await touch.up(9);
+    };
     const leaderBefore = await G(page, () => window.__legends.leaderId);
-    await page.getByLabel('Tab', { exact: true }).click();
+    await tapControl('ctl-nextAlly');
     await page.waitForTimeout(200);
     const leaderAfter = await G(page, () => window.__legends.leaderId);
-    check(leaderAfter !== leaderBefore, `toque rápido en Tab cambia de líder (${leaderBefore} -> ${leaderAfter})`, R);
+    check(leaderAfter !== leaderBefore, `toque rápido en "cambiar personaje" cambia de líder (${leaderBefore} -> ${leaderAfter})`, R);
     const p0 = await leaderPos(page);
     const box = { x: 8 + 56 * 1.3, y: 390 - 8 - 56 * 1.3 };
     await page.mouse.move(box.x, box.y);
@@ -183,7 +402,7 @@ export const scenarios = {
     check(p1.x - p0.x > 1, `joystick virtual mueve al líder (${p0.x.toFixed(1)} -> ${p1.x.toFixed(1)})`, R);
     const stick = await G(page, () => ({ ...window.__legends.input.touchStick }));
     check(stick.x === 0 && stick.y === 0, 'al soltar el joystick vuelve a reposo', R);
-    await page.getByLabel('≡').click();
+    await tapControl('ctl-menu');
     await waitState(page, 'PAUSED', 3000);
     check(true, 'botón táctil de menú abre la pausa', R);
     await shot('m2-touch-pause');
@@ -205,14 +424,14 @@ export const scenarios = {
       }, 10);
     });
     for (let i = 0; i < 6; i++) {
-      await page.getByLabel('J', { exact: true }).click();
+      await tapControl('ctl-light');
       await page.waitForTimeout(250);
     }
     const started = await G(page, () => {
       clearInterval(window.__mt);
       return [...window.__startedMoves];
     });
-    check(started.includes('light_1'), `botón táctil J lanza ataques en combate (${started.join(', ')})`, R);
+    check(started.includes('light_1'), `botón táctil de puño lanza ataques en combate (${started.join(', ')})`, R);
     await shot('m3-touch-combat');
     const failed = R.filter((r) => !r.ok);
     if (failed.length) throw new Error(`Fallaron: ${failed.map((f) => f.label).join('; ')}`);
@@ -384,7 +603,7 @@ export const scenarios = {
     await page.getByTestId('skill-combo_basics').click();
     await page.waitForTimeout(300);
     const learned = await G(page, () => window.__legends.roster.kaien.skills.combo_basics ?? 0);
-    check(learned === 1, '14 AP gastados: Kaien aprende "Combo físico" (desbloquea Patada lanzadora)', R);
+    check(learned === 1, '14 AP gastados: Goku aprende "Combo físico" (desbloquea Patada lanzadora)', R);
     await shot('10-skill-learned');
 
     // 15 the purchase itself triggers the autosave (no manual save); "saved" only after the verified write

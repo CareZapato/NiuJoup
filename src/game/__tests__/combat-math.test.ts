@@ -65,7 +65,8 @@ describe('move frame data', () => {
       expect(m.active, m.id).toBeGreaterThan(0);
       expect(m.recovery, m.id).toBeGreaterThanOrEqual(0);
       expect(moveTotalTicks(m)).toBe(m.startup + m.active + m.recovery);
-      expect(m.hitbox.radius, m.id).toBeGreaterThan(0);
+      const utility = m.technique?.effect === 'buff' || m.technique?.effect === 'teleport' || m.technique?.effect === 'flash';
+      if (!utility) expect(m.hitbox.radius, m.id).toBeGreaterThan(0);
       if (m.unlockedBy) expect(SKILLS[m.unlockedBy]?.unlocksMoves, `${m.id} -> ${m.unlockedBy}`).toContain(m.id);
     }
   });

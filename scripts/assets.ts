@@ -2,13 +2,14 @@
 //   npx tsx scripts/assets.ts export            -> assets/generated/** (PNG + manifest JSON)
 //   npx tsx scripts/assets.ts validate [dirs..] -> validates every <name>.png + <name>.json pair
 // Default validation dirs: assets/sprites (hand-made art) and assets/generated/sprites.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { PNG } from 'pngjs';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES } from '../src/game/content/characters';
 import type { AppearanceDef } from '../src/game/content/types';
 import { type AssetIssue, toTopDown, validateAtlas } from '../src/game/rendering/shared/assetValidation';
 import { generateCharacterAtlas } from '../src/game/rendering/shared/characterArt';
+import { generateHeroAtlas, isHeroAppearance } from '../src/game/rendering/shared/heroArt';
 import type { SpriteManifest } from '../src/game/rendering/shared/manifest';
 import { generateEffects, generateProps, generateTerrainAtlas, generateTrees, generateWater, type Tex } from '../src/game/rendering/shared/worldArt';
 
@@ -29,7 +30,16 @@ function exportAll(): void {
     ...Object.entries(NPC_APPEARANCES).map(([id, a]): [string, string, AppearanceDef] => ['npc', id, a]),
   ];
   const index: { sprites: string[]; world: string[] } = { sprites: [], world: [] };
+  for (const f of readdirSync(join(OUT, 'sprites'))) rmSync(join(OUT, 'sprites', f));
   for (const [kind, id, app] of sources) {
+    if (isHeroAppearance(app)) {
+      const a = generateHeroAtlas(`${kind}:${id}`, app);
+      const name = `${kind}_${id}_hero`;
+      writePng(join(OUT, 'sprites', `${name}.png`), a.width, a.height, a.data);
+      writeFileSync(join(OUT, 'sprites', `${name}.json`), JSON.stringify(a.manifest, null, 2));
+      index.sprites.push(name);
+      continue;
+    }
     for (const mode of ['world', 'battle'] as const) {
       const a = generateCharacterAtlas(`${kind}:${id}`, app, mode);
       const name = `${kind}_${id}_${mode}`;

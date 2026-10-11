@@ -3,9 +3,9 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import type { AllyOrder } from '../../game/components';
 import { CHARACTERS } from '../../game/content/characters';
 import { ITEMS, QUESTS } from '../../game/content/items';
-import { getMove } from '../../game/content/moves';
+import { getMove, NAME_STATUS_LABEL } from '../../game/content/moves';
 import { SKILLS, SKILL_TREES } from '../../game/content/skills';
-import type { EquipSlot, StatKey } from '../../game/content/types';
+import type { EquipSlot, FocusSymbol, StatKey } from '../../game/content/types';
 import { canPurchaseSkill, computeStats } from '../../game/systems/progression/progression';
 import { Bar, Panel, PixelButton, Txt } from '../components/primitives';
 import { useGameUi, useServices } from '../GameContext';
@@ -13,9 +13,10 @@ import { Minimap } from '../hud/Hud';
 import { COLORS } from '../theme';
 import { SettingsTab } from './SettingsTab';
 
-type Tab = 'party' | 'skills' | 'items' | 'quests' | 'map' | 'settings';
+type Tab = 'party' | 'techniques' | 'skills' | 'items' | 'quests' | 'map' | 'settings';
 const TABS: [Tab, string][] = [
   ['party', 'Personajes'],
+  ['techniques', 'Técnicas'],
   ['skills', 'Habilidades'],
   ['items', 'Inventario'],
   ['quests', 'Misiones'],
@@ -178,7 +179,18 @@ function SkillsTab() {
                 </Txt>
                 {sk.unlocksMoves.length > 0 && (
                   <Txt size={14} color={COLORS.ki}>
-                    {sk.unlocksMoves.map((id) => `${getMove(id).name}${getMove(id).command ? ` [${getMove(id).command!.label}]` : ''}`).join(', ')}
+                    {sk.unlocksMoves
+                      .map((id) => {
+                        const mv = getMove(id);
+                        const tag = mv.technique ? ` (${mv.technique.nameStatus === 'canon' ? 'canon' : mv.technique.nameStatus === 'adaptation' ? 'adaptación' : 'descriptivo'})` : '';
+                        return `${mv.name}${tag}${mv.command ? ` [${mv.command.label}]` : ''}`;
+                      })
+                      .join(', ')}
+                  </Txt>
+                )}
+                {sk.unavailable && (
+                  <Txt size={13} color={COLORS.warn}>
+                    {sk.unavailable}
                   </Txt>
                 )}
                 <PixelButton
@@ -193,6 +205,106 @@ function SkillsTab() {
           })}
         </View>
       ))}
+    </View>
+  );
+}
+
+const SYMBOL_TEXT: Record<FocusSymbol, string> = { F: '→', B: '←', U: '↑', D: '↓', P: 'Puño', K: 'Ki', H: 'Fuerte', G: 'Guardia' };
+const seqText = (s: FocusSymbol[] | null): string => (s ? s.map((x) => SYMBOL_TEXT[x]).join(' ') : 'directa');
+
+/**
+ * Technique loadout: 4 slots + the limit. Tap a slot, then a technique to
+ * place it there (swaps if it was in another slot). Only editable outside
+ * combat; every change is saved through SaveManager.
+ */
+function TechniquesTab() {
+  const { game } = useServices();
+  useGameUi();
+  const [sel, setSel] = useState(game.partyOrder[0]);
+  const [slot, setSlot] = useState(0);
+  const m = game.roster[sel];
+  const editable = game.fsm.previous === 'WORLD_EXPLORATION';
+  const known = game.techniquesOf(sel);
+  const limit = m.limit ? getMove(m.limit) : null;
+  const tree = SKILL_TREES[CHARACTERS[sel].skillTree];
+  const locked = tree.nodes
+    .map((n) => SKILLS[n.skillId])
+    .flatMap((sk) => sk.unlocksMoves.filter((id) => getMove(id).technique?.slot === 'ability' && !known.some((k) => k.id === id)).map((id) => ({ id, sk })));
+
+  return (
+    <View>
+      <CharacterPicker ids={Object.keys(CHARACTERS)} selected={sel} onSelect={setSel} />
+      <Txt size={20} color={COLORS.gold}>
+        Ranuras de técnica
+      </Txt>
+      <View style={styles.row}>
+        {m.slots.map((id, i) => (
+          <PixelButton
+            key={i}
+            small
+            testID={`slot-${i}`}
+            active={slot === i}
+            label={`${i + 1}: ${id ? getMove(id).name : 'Vacío'}`}
+            onPress={() => setSlot(i)}
+          />
+        ))}
+        <PixelButton small label="Vaciar ranura" disabled={!editable || !m.slots[slot]} onPress={() => game.setSlot(sel, slot, null)} />
+      </View>
+      {limit && (
+        <Txt size={16} color={COLORS.rage}>
+          Límite: {limit.name} — {NAME_STATUS_LABEL[limit.technique!.nameStatus]} · consume toda la furia (100) y no gasta ki
+        </Txt>
+      )}
+      {!editable && (
+        <Txt size={15} color={COLORS.warn}>
+          Las técnicas solo se reasignan fuera del combate.
+        </Txt>
+      )}
+      <Txt size={20} color={COLORS.gold}>
+        Aprendidas
+      </Txt>
+      {known.length === 0 && <Txt color={COLORS.dim}>Aún no conoce técnicas.</Txt>}
+      {known.map((t) => {
+        const at = m.slots.indexOf(t.id);
+        return (
+          <View key={t.id} style={styles.rowBetween}>
+            <View style={{ flex: 1 }}>
+              <Txt size={18} color={COLORS.ki}>
+                {t.name} <Txt size={14} color={t.status === NAME_STATUS_LABEL.canon ? COLORS.good : COLORS.quest}>[{t.status}]</Txt>
+              </Txt>
+              <Txt size={14} color={COLORS.dim}>
+                Ki {t.kiCost} · secuencia: {seqText(t.sequence)}
+                {t.world ? ' · también en el mapa' : ''}
+                {t.aliases.length ? ` · también llamada ${t.aliases.join(', ')}` : ''}
+              </Txt>
+              {t.note ? (
+                <Txt size={13} color={COLORS.dim}>
+                  {t.note}
+                </Txt>
+              ) : null}
+            </View>
+            <PixelButton
+              small
+              testID={`assign-${t.id}`}
+              label={at === slot ? `En ranura ${slot + 1}` : `Poner en ${slot + 1}`}
+              disabled={!editable || at === slot}
+              onPress={() => game.setSlot(sel, slot, t.id)}
+            />
+          </View>
+        );
+      })}
+      {locked.length > 0 && (
+        <>
+          <Txt size={20} color={COLORS.gold}>
+            Por desbloquear
+          </Txt>
+          {locked.map(({ id, sk }) => (
+            <Txt key={id} size={15} color={COLORS.dim}>
+              {getMove(id).name} [{NAME_STATUS_LABEL[getMove(id).technique!.nameStatus]}] — habilidad «{sk.name}» (nivel {sk.minCharacterLevel}, {sk.costPerLevel[0]} AP)
+            </Txt>
+          ))}
+        </>
+      )}
     </View>
   );
 }
@@ -295,6 +407,7 @@ export function PauseMenu() {
         </View>
         <ScrollView style={styles.content}>
           {tab === 'party' && <PartyTab />}
+          {tab === 'techniques' && <TechniquesTab />}
           {tab === 'skills' && <SkillsTab />}
           {tab === 'items' && <ItemsTab />}
           {tab === 'quests' && <QuestsTab />}

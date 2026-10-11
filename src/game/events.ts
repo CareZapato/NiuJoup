@@ -21,6 +21,15 @@ export interface GameEvents {
   toast: { text: string; tone?: 'info' | 'good' | 'warn' | 'quest' };
   dialogue: { speaker: string; lines: string[] };
   obstacleBroken: { id: string; x: number; z: number };
+  /** A named technique actually started (after validation and ki/rage payment). */
+  techniqueUsed: { entityId: number; moveId: string; name: string; limit: boolean };
+  beamFired: { ownerId: number; x: number; y: number; z: number; dirX: number; dirZ: number; length: number; width: number; ticks: number; color: number };
+  flash: { ownerId: number; x: number; y: number; z: number; radius: number; affected: number };
+  blinded: { entityId: number; ticks: number };
+  limitReady: { entityId: number; characterId: string };
+  focusStart: { entityId: number; preselected: string | null };
+  focusEnd: { entityId: number; result: 'success' | 'invalid' | 'timeout' | 'interrupted' | 'cancelled'; moveId: string | null };
+  confused: { entityId: number; ticks: number };
   saveRequested: { reason: string; immediate: boolean };
   saved: { ok: boolean; reason: string; error?: string };
 }

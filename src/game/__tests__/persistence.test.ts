@@ -39,12 +39,62 @@ describe('save schema', () => {
       flags: ['chest:chest_village', 'boss:e_golem'],
     };
     const d = migrate(v1 as unknown as Record<string, unknown>);
-    expect(d.version).toBe(2);
+    expect(d.version).toBe(3);
     expect(d.leader).toBe('suri');
-    expect(d.roster.suri.skills).toEqual({ combo_basics: 1 });
+    expect(d.roster.suri.skills).toEqual({ combo_basics: 1, rogafufuken: 1 });
+    expect(d.roster.suri.slots[0]).toBe('rogafufuken');
     expect(d.money).toBe(321);
     expect(d.world.openedChests).toEqual(['chest_village']);
     expect(d.world.defeatedPersistent).toEqual(['e_golem']);
+  });
+
+  it('migrates a v2 save (old cast) to v3 without losing progress, items or money', () => {
+    const v2 = {
+      ...sampleSave(),
+      version: 2,
+      leader: 'toren',
+      partyOrder: ['toren', 'kaien', 'oren'],
+      money: 777,
+      inventory: { herb: 2 },
+    } as unknown as Record<string, unknown> & { roster: Record<string, Record<string, unknown>> };
+    const roster = v2.roster;
+    roster.kaien = { ...roster.kaien, level: 6, xp: 40, ap: 1, skills: { combo_basics: 1, ki_barrage: 1, teleport: 1, meteor_impact: 1 } };
+    roster.oren = { ...roster.oren, level: 3, ap: 0, skills: { charged_shot: 1 } };
+    roster.toren = { characterId: 'toren', level: 5, xp: 0, ap: 0, skills: {}, equipment: { hands: 'iron_wristbands', body: null, accessory: null }, hp: 10, ki: 10 };
+    for (const id of Object.keys(roster)) {
+      delete roster[id].slots;
+      delete roster[id].limit;
+      delete roster[id].rage;
+    }
+    const d = migrate(v2);
+    expect(d.version).toBe(3);
+    expect(d.roster.toren).toBeUndefined();
+    expect(d.leader).not.toBe('toren');
+    expect(d.partyOrder).toEqual(['kaien', 'oren', 'suri']);
+    expect(d.inventory.iron_wristbands).toBe(1);
+    expect(d.inventory.herb).toBe(2);
+    expect(d.money).toBe(777);
+    const k = d.roster.kaien;
+    expect(k.level).toBe(6);
+    expect(k.xp).toBe(40);
+    // ki_barrage (2 AP) is refunded; teleport and meteor impact are kept; Kamehameha is granted.
+    expect(k.ap).toBe(3);
+    expect(k.skills).toMatchObject({ combo_basics: 1, teleport: 1, meteor_impact: 1, kamehameha: 1 });
+    expect(k.skills.ki_barrage).toBeUndefined();
+    expect(k.slots).toContain('kamehameha');
+    expect(k.slots).toContain('teleport');
+    expect(k.limit).toBe('ki_volley');
+    expect(k.rage).toBe(0);
+    expect(d.roster.oren.ap).toBe(2);
+    expect(d.roster.oren.skills.kienzan).toBe(1);
+    expect(() => validate(d as unknown as Record<string, unknown>)).not.toThrow();
+  });
+
+  it('a save never contains transient focus / slow-motion / confusion state', () => {
+    const g = new Game();
+    g.newGame('kaien');
+    const json = JSON.stringify(g.toSave());
+    for (const k of ['focus', 'timeScale', 'confused', 'sequenceToken', 'buff', 'blind']) expect(json).not.toContain(`"${k}`);
   });
 
   it('rejects invalid or future saves', () => {

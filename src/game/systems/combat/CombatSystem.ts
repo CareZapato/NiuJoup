@@ -1,22 +1,40 @@
 import type { CombatStateId, Entity } from '../../components';
 import { BALANCE } from '../../content/balance';
+import { ENEMIES } from '../../content/characters';
 import { getMove, MOVES, moveTotalTicks } from '../../content/moves';
-import type { MoveDef } from '../../content/types';
+import type { MoveDef, TechniqueDef } from '../../content/types';
 import type { World } from '../../core/ecs/World';
 import type { EventBus } from '../../core/events/EventBus';
 import { TICK_DT } from '../../core/loop/FixedLoop';
-import { clamp, damp, lerpAngle, type Rng, vec3, type Vec3, yawFromDir } from '../../core/math';
+import { clamp, damp, distXZ, lerpAngle, type Rng, vec3, type Vec3, yawFromDir } from '../../core/math';
 import type { GameEvents } from '../../events';
 import { resolveChain } from '../../input/CommandInterpreter';
 import type { TileMap } from '../../world/TileMap';
 import { hitboxCenter, sphereHitsCapsule } from '../collision/shapes';
-import { computeDamage, spendKi } from './damage';
+import { computeDamage } from './damage';
+import { canAfford, chargeKi, regenKi, spendKi } from './ki';
 import type { PowerBalance } from './PowerBalance';
-import { isAlive, isValidTarget, nearestEnemy } from './targeting';
+import { limitReady, rageFromDamage, rageFromHitLanded } from './rage';
+import { clipLine, distribute, isAlive, isHostile, nearestEnemy, selectTargets } from './targeting';
 
 export interface Arena {
   center: Vec3;
   radius: number;
+}
+
+export interface ProjectileOpts {
+  castId: number;
+  /** Damage multiplier (mastery, buffs) baked into the projectile. */
+  power?: number;
+  /** Launch direction override (unit XZ). */
+  dirX?: number;
+  dirZ?: number;
+  /** Spawn height offset above the default (discs form over the head). */
+  lift?: number;
+  impacts?: number;
+  rehitTicks?: number;
+  retarget?: boolean;
+  bossImpactCap?: number;
 }
 
 export interface CombatContext {
@@ -27,17 +45,30 @@ export interface CombatContext {
   rng: Rng;
   tick: number;
   arena: Arena;
-  spawnProjectile: (owner: Entity, move: MoveDef, target: Entity | null) => void;
+  spawnProjectile: (owner: Entity, move: MoveDef, target: Entity | null, opts?: ProjectileOpts) => void;
+  nextCastId: () => number;
+}
+
+export interface HitOpts {
+  /** Extra damage multiplier (mastery). */
+  multiplier?: number;
+  /** Max fraction of a boss's max HP this impact may remove. */
+  bossImpactCap?: number;
+  /** Intermediate impact of a multi-hit rush (light reaction). */
+  minor?: boolean;
 }
 
 const C = BALANCE.combat;
+const F = BALANCE.focus;
 const scratch = vec3();
 
 const ATTACK_STATES: ReadonlySet<CombatStateId> = new Set(['LIGHT_ATTACK', 'HEAVY_ATTACK', 'KI_ATTACK', 'SPECIAL_ATTACK']);
 const STUNNED: ReadonlySet<CombatStateId> = new Set(['HIT_STUN', 'KNOCKBACK', 'LAUNCHED']);
+const FREE: ReadonlySet<CombatStateId> = new Set(['IDLE', 'MOVE', 'FLY']);
 
 export const isAttacking = (s: CombatStateId): boolean => ATTACK_STATES.has(s);
 export const isStunned = (s: CombatStateId): boolean => STUNNED.has(s);
+export const isFree = (s: CombatStateId): boolean => FREE.has(s);
 
 function setState(e: Entity, s: CombatStateId): void {
   const c = e.combatant!;
@@ -59,9 +90,53 @@ function stateForMove(m: MoveDef): CombatStateId {
   }
 }
 
+export const isBoss = (e: Entity): boolean => !!e.explorer && !!ENEMIES[e.explorer.enemyId]?.persistentDefeat;
+
+function buffDef(e: Entity): TechniqueDef['buff'] | null {
+  const b = e.combatant!.buff;
+  return b ? (getMove(b.moveId).technique?.buff ?? null) : null;
+}
+
 export function speedMultiplier(e: Entity): number {
   const c = e.combatant!;
-  return (0.8 + c.stats.speed / 50) * (c.transformed ? 1.2 : 1);
+  return (0.8 + c.stats.speed / 50) * (c.transformed ? 1.2 : 1) * (buffDef(e)?.speedMultiplier ?? 1);
+}
+
+export function attackMultiplier(e: Entity): number {
+  const c = e.combatant!;
+  return (c.transformed ? 1.2 : 1) * (buffDef(e)?.attackMultiplier ?? 1);
+}
+
+export const masteryMultiplier = (c: { mastery: Record<string, number> }, moveId: string): number => 1 + 0.12 * (c.mastery[moveId] ?? 0);
+export const masteryCooldown = (c: { mastery: Record<string, number> }, m: MoveDef): number => Math.round(m.cooldownTicks * (1 - 0.1 * (c.mastery[m.id] ?? 0)));
+
+/** Can this combatant start a new action right now (not stunned, confused, mid-move...)? */
+export function canAct(c: { state: CombatStateId; confusedTicks: number; blindTicks: number; meteoVictim: boolean }): boolean {
+  return isFree(c.state) && c.confusedTicks <= 0 && c.blindTicks <= 0 && !c.meteoVictim;
+}
+
+/**
+ * Validation shared by the focus controller (at sequence start) and the
+ * combat system (at execution). Returns null when usable, else a reason.
+ */
+export function techniqueBlocker(e: Entity, moveId: string, world: World): string | null {
+  const c = e.combatant!;
+  const m = MOVES[moveId];
+  const t = m?.technique;
+  if (!m || !t) return 'Técnica desconocida';
+  if (t.slot === 'limit') {
+    if (!limitReady(c)) return 'Furia insuficiente';
+  } else {
+    if (!c.unlockedMoves.includes(moveId)) return 'Técnica bloqueada';
+    if ((c.cooldowns[moveId] ?? 0) > 0) return 'En recarga';
+    if (!canAfford(c, m.kiCost)) return 'Ki insuficiente';
+  }
+  if (t.effect === 'teleport') {
+    const target = world.get(c.targetId);
+    if (!isHostile(e, target) || distXZ(target.transform.pos, e.transform.pos) > t.targeting.range) return 'Sin objetivo al alcance';
+  }
+  if (t.effect === 'buff' && c.buff) return 'Ya activo';
+  return null;
 }
 
 /**
@@ -84,14 +159,11 @@ export class CombatSystem {
         continue;
       }
       if (c.meteoVictim) continue;
-      if (!isValidTarget(e, ctx.world.get(c.targetId))) {
+      if (!isHostile(e, ctx.world.get(c.targetId))) {
         const t = nearestEnemy(e, combatants);
         c.targetId = t ? t.id : -1;
       }
-      if (c.intent.nextTarget) {
-        // Handled by the caller (needs player context); cleared here.
-        c.intent.nextTarget = false;
-      }
+      if (c.intent.nextTarget) c.intent.nextTarget = false;
       if (c.intent.action) {
         c.bufferedAction = c.intent.action;
         c.bufferedTicks = 10;
@@ -114,9 +186,28 @@ export class CombatSystem {
       c.comboCount = 0;
       c.comboDamage = 0;
     }
-    if (c.state !== 'CHARGE' && c.state !== 'DEFEATED') c.ki = Math.min(c.stats.maxKi, c.ki + C.kiRegenPerSecond * TICK_DT);
+    if (c.confusedTicks > 0) c.confusedTicks--;
+    if (c.blindTicks > 0) c.blindTicks--;
+    if (c.state !== 'CHARGE' && c.state !== 'DEFEATED') regenKi(c);
+    if (c.buff) this.tickBuff(e);
     c.transformed = c.passives.includes('transform') && ctx.pb.dominance === c.team;
     if (e.sprite) e.sprite.transformed = c.transformed;
+  }
+
+  /** Kaioken-style sustained cost. HP strain never kills and never feeds rage. */
+  private tickBuff(e: Entity): void {
+    const c = e.combatant!;
+    const b = c.buff!;
+    const def = buffDef(e)!;
+    c.ki = Math.max(0, c.ki - def.kiDrainPerSecond * TICK_DT);
+    c.hp = Math.max(1, c.hp - def.hpDrainPerSecond * TICK_DT);
+    if (--b.ticksLeft <= 0 || c.ki <= 0 || c.state === 'DEFEATED') {
+      c.buff = null;
+      if (e.sprite) {
+        e.sprite.auraColor = null;
+        e.sprite.strain = false;
+      }
+    }
   }
 
   private target(e: Entity, ctx: CombatContext): Entity | null {
@@ -135,6 +226,19 @@ export class CombatSystem {
     const c = e.combatant!;
     const body = e.body!;
     const intent = c.intent;
+    // Stun-lock breaker: after a long uninterrupted chain of hit reactions (typically 3-on-1),
+    // the victim gets a short window where hits still hurt but no longer stun.
+    if (c.stunArmorTicks > 0) c.stunArmorTicks--;
+    if (isStunned(c.state) && !c.meteoVictim) {
+      if (++c.stunChain >= C.stunLockMaxTicks) {
+        c.stunChain = 0;
+        c.stunArmorTicks = C.stunLockArmorTicks;
+        c.hitstun = Math.min(c.hitstun, 4);
+      }
+    } else if (c.stunChain > 0) {
+      // Decays instead of resetting, so one-tick gaps between hits don't hide a lock.
+      c.stunChain = Math.max(0, c.stunChain - C.stunLockDecayPerTick);
+    }
     switch (c.state) {
       case 'HIT_STUN':
         this.applyFriction(body, 8);
@@ -142,9 +246,7 @@ export class CombatSystem {
         return;
       case 'KNOCKBACK':
         this.applyFriction(body, C.knockbackFriction);
-        if (--c.hitstun <= 0) {
-          setState(e, 'RECOVERY');
-        }
+        if (--c.hitstun <= 0) setState(e, 'RECOVERY');
         return;
       case 'LAUNCHED':
         body.vel.y -= C.launchGravity * TICK_DT;
@@ -163,6 +265,17 @@ export class CombatSystem {
         this.applyFriction(body, 12);
         if (c.stateTicks > 14) setState(e, 'IDLE');
         return;
+      case 'CONFUSED':
+        // Unbalanced: no attack, guard or dodge; buffered input is discarded.
+        this.applyFriction(body, 10);
+        c.bufferedAction = null;
+        if (c.confusedTicks <= 0) setState(e, 'IDLE');
+        return;
+      case 'BLINDED':
+        this.applyFriction(body, 10);
+        c.bufferedAction = null;
+        if (c.blindTicks <= 0) setState(e, 'IDLE');
+        return;
       case 'DASH':
         this.updateDash(e, ctx);
         return;
@@ -172,10 +285,11 @@ export class CombatSystem {
         if (!intent.guard) setState(e, 'IDLE');
         return;
       case 'CHARGE':
+        // Immobile; attacks and guard are blocked until the charge is released.
         this.applyFriction(body, 14);
-        c.ki = Math.min(c.stats.maxKi, c.ki + C.kiChargePerSecond * TICK_DT);
-        if (!intent.charge) setState(e, 'IDLE');
-        else if (c.bufferedAction || intent.guard || intent.dash) setState(e, 'IDLE');
+        c.bufferedAction = null;
+        chargeKi(c);
+        if (!intent.charge || c.ki >= c.stats.maxKi) setState(e, 'IDLE');
         return;
       case 'LIGHT_ATTACK':
       case 'HEAVY_ATTACK':
@@ -194,12 +308,20 @@ export class CombatSystem {
     const body = e.body!;
     const intent = c.intent;
 
+    if (c.confusedTicks > 0) {
+      setState(e, 'CONFUSED');
+      return;
+    }
+    if (c.blindTicks > 0) {
+      setState(e, 'BLINDED');
+      return;
+    }
     if (intent.special && this.tryStartMeteo(e, ctx)) return;
+    if (intent.technique && this.tryStartTechnique(e, intent.technique, ctx)) return;
     if (c.bufferedAction && this.tryStartMove(e, c.bufferedAction, ctx)) {
       c.bufferedAction = null;
       return;
     }
-    if (intent.teleport && c.passives.includes('teleport') && this.tryTeleport(e, ctx)) return;
     if (intent.dash && this.tryDash(e, ctx)) return;
     if (intent.guard) {
       setState(e, 'GUARD');
@@ -229,9 +351,9 @@ export class CombatSystem {
   tryStartMove(e: Entity, requested: string, ctx: CombatContext): boolean {
     const c = e.combatant!;
     const id = resolveChain(isAttacking(c.state) ? c.moveId : null, requested);
-    if (!c.unlockedMoves.includes(id)) return false;
     const m = MOVES[id];
-    if (!m) return false;
+    if (!m || m.technique) return false;
+    if (!c.unlockedMoves.includes(id)) return false;
     if ((c.cooldowns[id] ?? 0) > 0) return false;
     if (id === 'air_chase') {
       const t = ctx.world.get(c.lastLaunchedTarget);
@@ -239,14 +361,7 @@ export class CombatSystem {
       c.targetId = t.id;
     }
     if (!spendKi(c, m.kiCost)) return false;
-    c.moveId = id;
-    c.moveTick = 0;
-    c.moveHits.length = 0;
-    c.moveConnected = false;
-    c.state = stateForMove(m);
-    c.stateTicks = 0;
-    if (m.cooldownTicks > 0) c.cooldowns[id] = m.cooldownTicks;
-    this.faceTarget(e, ctx, 60);
+    this.beginMove(e, m, ctx);
     if (id === 'air_chase') {
       const t = this.target(e, ctx);
       if (t) {
@@ -263,6 +378,42 @@ export class CombatSystem {
     return true;
   }
 
+  private beginMove(e: Entity, m: MoveDef, ctx: CombatContext): void {
+    const c = e.combatant!;
+    c.moveId = m.id;
+    c.moveTick = 0;
+    c.moveHits.length = 0;
+    c.moveConnected = false;
+    c.castEmitted = 0;
+    c.castHits = {};
+    c.castId = ctx.nextCastId();
+    c.state = stateForMove(m);
+    c.stateTicks = 0;
+    const cd = masteryCooldown(c, m);
+    if (cd > 0) c.cooldowns[m.id] = cd;
+    this.faceTarget(e, ctx, 60);
+  }
+
+  /**
+   * Named techniques. A player-controlled fighter needs the matching
+   * sequence token, so offensive specials can't skip their sequence. Ki (or
+   * all rage, for limits) is charged exactly once, here, at execution.
+   */
+  tryStartTechnique(e: Entity, id: string, ctx: CombatContext): boolean {
+    const c = e.combatant!;
+    const m = MOVES[id];
+    const t = m?.technique;
+    if (!m || !t || !canAct(c)) return false;
+    if (c.playerControlled && c.sequenceToken !== id) return false;
+    if (techniqueBlocker(e, id, ctx.world)) return false;
+    if (t.slot === 'limit') c.rage = 0;
+    else if (!spendKi(c, m.kiCost)) return false;
+    c.sequenceToken = null;
+    this.beginMove(e, m, ctx);
+    ctx.events.emit('techniqueUsed', { entityId: e.id, moveId: id, name: m.name, limit: t.slot === 'limit' });
+    return true;
+  }
+
   private updateAttack(e: Entity, ctx: CombatContext): void {
     const c = e.combatant!;
     const body = e.body!;
@@ -271,7 +422,7 @@ export class CombatSystem {
     const target = this.target(e, ctx);
 
     // Cancel window into a chained/cancellable move.
-    if (c.bufferedAction && t >= m.cancelFrom && (c.moveConnected || !m.cancelOnHitOnly)) {
+    if (!m.technique && c.bufferedAction && t >= m.cancelFrom && (c.moveConnected || !m.cancelOnHitOnly)) {
       const next = resolveChain(c.moveId, c.bufferedAction);
       if (m.cancelInto.includes(next) && this.tryStartMove(e, c.bufferedAction, ctx)) {
         c.bufferedAction = null;
@@ -281,11 +432,12 @@ export class CombatSystem {
 
     if (t < m.startup + m.active) {
       if (t < m.startup) this.faceTarget(e, ctx, 25);
-      if (m.lunge > 0 && !m.projectile) {
+      if (m.lunge > 0 && !m.projectile && t >= (m.technique ? m.startup : 0)) {
         const fx = Math.sin(e.transform.yaw);
         const fz = Math.cos(e.transform.yaw);
         let speed = m.lunge;
         if (target) {
+          if (m.technique) this.faceTarget(e, ctx, 30);
           const d = Math.hypot(target.transform.pos.x - e.transform.pos.x, target.transform.pos.z - e.transform.pos.z);
           const stopAt = (m.hitbox.forward + target.body!.radius) * 0.85;
           if (d <= stopAt) speed = 0;
@@ -303,17 +455,18 @@ export class CombatSystem {
       body.vel.y *= 0.8;
     }
 
-    if (t === m.startup && m.projectile) ctx.spawnProjectile(e, m, target);
-
-    if (!m.projectile && t >= m.startup && t < m.startup + m.active) {
-      hitboxCenter(scratch, e.transform.pos, e.transform.yaw, body.height, e.sprite?.scale ?? 1, m.hitbox);
-      const r = m.hitbox.radius * (e.sprite?.scale ?? 1);
-      for (const o of ctx.world.query('combatant')) {
-        if (o === e || !isAlive(o) || o.combatant!.team === c.team) continue;
-        if (c.moveHits.includes(o.id)) continue;
-        if (sphereHitsCapsule(scratch.x, scratch.y, scratch.z, r, o.transform.pos, o.body!.height, o.body!.radius)) {
-          c.moveHits.push(o.id);
-          this.applyHit(e, o, m, Math.sin(e.transform.yaw), Math.cos(e.transform.yaw), ctx);
+    if (m.technique) this.updateTechnique(e, m, m.technique, ctx, target);
+    else {
+      if (t === m.startup && m.projectile) ctx.spawnProjectile(e, m, target, { castId: c.castId, power: attackMultiplier(e) });
+      if (!m.projectile && t >= m.startup && t < m.startup + m.active) {
+        hitboxCenter(scratch, e.transform.pos, e.transform.yaw, body.height, e.sprite?.scale ?? 1, m.hitbox);
+        const r = m.hitbox.radius * (e.sprite?.scale ?? 1);
+        for (const o of ctx.world.query('combatant')) {
+          if (!isHostile(e, o) || c.moveHits.includes(o.id)) continue;
+          if (sphereHitsCapsule(scratch.x, scratch.y, scratch.z, r, o.transform.pos, o.body!.height, o.body!.radius)) {
+            c.moveHits.push(o.id);
+            this.applyHit(e, o, m, Math.sin(e.transform.yaw), Math.cos(e.transform.yaw), ctx);
+          }
         }
       }
     }
@@ -322,10 +475,126 @@ export class CombatSystem {
     if (c.moveTick >= moveTotalTicks(m)) setState(e, 'IDLE');
   }
 
-  applyHit(attacker: Entity, defender: Entity, m: MoveDef, dirX: number, dirZ: number, ctx: CombatContext): void {
+  private updateTechnique(e: Entity, m: MoveDef, tech: TechniqueDef, ctx: CombatContext, target: Entity | null): void {
+    const c = e.combatant!;
+    const t = c.moveTick;
+    const mult = masteryMultiplier(c, m.id);
+    const yaw = e.transform.yaw;
+    const dirX = Math.sin(yaw);
+    const dirZ = Math.cos(yaw);
+    const origin = vec3(e.transform.pos.x + dirX * 0.5, e.transform.pos.y + e.body!.height * 0.55, e.transform.pos.z + dirZ * 0.5);
+    const all = ctx.world.query('combatant');
+    const query = { origin, dirX, dirZ, targeting: tech.targeting, preferId: c.targetId };
+    switch (tech.effect) {
+      case 'beam': {
+        if (t !== m.startup) return;
+        const length = clipLine(ctx.map, origin.x, origin.z, origin.y, dirX, dirZ, tech.targeting.range);
+        const hits = selectTargets(e, all, { ...query, length }, ctx.map).slice(0, tech.targeting.maxImpacts);
+        ctx.events.emit('beamFired', { ownerId: e.id, x: origin.x, y: origin.y, z: origin.z, dirX, dirZ, length, width: tech.targeting.width, ticks: m.active, color: e.appearance?.palette.aura ?? 0x9ad8ff });
+        for (const o of hits) this.applyHit(e, o, m, dirX, dirZ, ctx, { multiplier: mult * attackMultiplier(e), bossImpactCap: tech.targeting.bossImpactCap });
+        return;
+      }
+      case 'disc':
+      case 'guided':
+      case 'scatter':
+      case 'barrage': {
+        const count = tech.count ?? 1;
+        const interval = tech.interval ?? 1;
+        if (t < m.startup || c.castEmitted >= count || (t - m.startup) % interval !== 0) return;
+        if (c.castEmitted === 0) c.castHits = {};
+        const targets = selectTargets(e, all, query, ctx.map);
+        const plan = distribute(targets, count, c.castMode);
+        const tgt = plan[c.castEmitted] ?? target;
+        const spread = tech.effect === 'scatter' ? (c.castEmitted - (count - 1) / 2) * 0.35 : 0;
+        const perProjectileImpacts = tech.effect === 'disc' ? Math.max(1, Math.floor(tech.targeting.maxImpacts / count)) : tech.effect === 'guided' ? tech.targeting.maxImpacts : 1;
+        ctx.spawnProjectile(e, m, tgt, {
+          castId: c.castId,
+          power: mult * attackMultiplier(e),
+          dirX: Math.sin(yaw + spread),
+          dirZ: Math.cos(yaw + spread),
+          lift: tech.pose === 'kienzan' ? e.body!.height * 0.55 : tech.effect === 'scatter' ? 0.8 : 0,
+          impacts: perProjectileImpacts,
+          rehitTicks: tech.targeting.rehitTicks,
+          retarget: tech.targeting.onTargetDeath === 'retarget',
+          bossImpactCap: tech.targeting.bossImpactCap,
+        });
+        c.castEmitted++;
+        return;
+      }
+      case 'flash': {
+        if (t !== m.startup) return;
+        const hits = selectTargets(e, all, { ...query, origin: e.transform.pos }, ctx.map).slice(0, tech.targeting.maxImpacts);
+        for (const o of hits) {
+          const oc = o.combatant!;
+          if (oc.meteoVictim) continue;
+          oc.blindTicks = isBoss(o) ? (tech.bossBlindTicks ?? 60) : (tech.blindTicks ?? 120);
+          oc.moveId = null;
+          oc.bufferedAction = null;
+          setState(o, 'BLINDED');
+          ctx.events.emit('blinded', { entityId: o.id, ticks: oc.blindTicks });
+        }
+        ctx.pb.add(c.team, m.powerBalance);
+        ctx.events.emit('flash', { ownerId: e.id, x: e.transform.pos.x, y: e.transform.pos.y + 1.2, z: e.transform.pos.z, radius: tech.targeting.width, affected: hits.length });
+        return;
+      }
+      case 'rush': {
+        if (t < m.startup || t >= m.startup + m.active) return;
+        const maxImpacts = tech.targeting.maxImpacts;
+        if (c.castEmitted >= maxImpacts) return;
+        hitboxCenter(scratch, e.transform.pos, yaw, e.body!.height, e.sprite?.scale ?? 1, m.hitbox);
+        const r = m.hitbox.radius * (e.sprite?.scale ?? 1);
+        let landed = 0;
+        for (const o of all) {
+          if (!isHostile(e, o) || landed >= tech.targeting.maxTargets) continue;
+          const last = c.castHits[o.id];
+          if (last !== undefined && (tech.targeting.rehitTicks <= 0 || t - last < tech.targeting.rehitTicks)) continue;
+          if (!sphereHitsCapsule(scratch.x, scratch.y, scratch.z, r, o.transform.pos, o.body!.height, o.body!.radius)) continue;
+          c.castHits[o.id] = t;
+          c.castEmitted++;
+          landed++;
+          const final = c.castEmitted >= maxImpacts;
+          this.applyHit(e, o, m, dirX, dirZ, ctx, { multiplier: mult * attackMultiplier(e), minor: !final });
+          // Hold the victim in place during the flurry.
+          if (!final && o.combatant!.state !== 'DEFEATED') o.combatant!.hitstun = Math.max(o.combatant!.hitstun, tech.targeting.rehitTicks + 4);
+        }
+        return;
+      }
+      case 'buff': {
+        if (t !== m.startup || !tech.buff) return;
+        c.buff = { moveId: m.id, ticksLeft: tech.buff.durationTicks };
+        if (e.sprite) {
+          e.sprite.auraColor = 0xff3a2a;
+          e.sprite.strain = true;
+        }
+        return;
+      }
+      case 'teleport': {
+        if (t !== m.startup) return;
+        const tg = target && distXZ(target.transform.pos, e.transform.pos) <= tech.targeting.range ? target : null;
+        if (!tg) return;
+        const from = e.transform.pos;
+        ctx.events.emit('teleport', { entityId: e.id, fromX: from.x, fromY: from.y, fromZ: from.z });
+        const away = yawFromDir(tg.transform.pos.x - from.x, tg.transform.pos.z - from.z);
+        let nx = tg.transform.pos.x + Math.sin(away) * 1.2;
+        let nz = tg.transform.pos.z + Math.cos(away) * 1.2;
+        if (!ctx.map.canOccupy(nx, nz, tg.transform.pos.y, e.body!.radius, 0.05, true)) {
+          nx = tg.transform.pos.x - Math.sin(away) * 1.2;
+          nz = tg.transform.pos.z - Math.cos(away) * 1.2;
+        }
+        from.x = e.transform.prev.x = nx;
+        from.z = e.transform.prev.z = nz;
+        from.y = e.transform.prev.y = tg.transform.pos.y;
+        e.transform.yaw = yawFromDir(tg.transform.pos.x - nx, tg.transform.pos.z - nz);
+        return;
+      }
+    }
+  }
+
+  applyHit(attacker: Entity, defender: Entity, m: MoveDef, dirX: number, dirZ: number, ctx: CombatContext, opts: HitOpts = {}): void {
     const a = attacker.combatant!;
     const d = defender.combatant!;
-    if (d.invuln > 0 || d.meteoVictim || d.state === 'DEFEATED') return;
+    if (!isHostile(attacker, defender)) return;
+    if (d.invuln > 0 || d.meteoVictim) return;
     a.moveConnected = true;
     const px = defender.transform.pos.x;
     const py = defender.transform.pos.y + defender.body!.height * 0.6;
@@ -351,61 +620,79 @@ export class CombatSystem {
     }
 
     const comboBefore = isStunned(d.state) ? a.comboCount : 0;
+    const confusedMult = d.confusedTicks > 0 ? F.confusedDamageTaken : 1;
     const res = computeDamage(m, a.stats, d.stats, {
       comboCount: comboBefore,
       guarding,
       critRoll: ctx.rng.next(),
-      attackerMultiplier: a.transformed ? 1.2 : 1,
+      attackerMultiplier: opts.multiplier ?? attackMultiplier(attacker),
+      bonusMultiplier: confusedMult,
     });
-    d.hp = Math.max(0, d.hp - res.damage);
+    let damage = res.damage;
+    if (opts.bossImpactCap !== undefined && isBoss(defender)) damage = Math.min(damage, Math.max(1, Math.floor(d.stats.maxHp * opts.bossImpactCap)));
+    d.hp = Math.max(0, d.hp - damage);
     d.lastHitBy = attacker.id;
     d.lastHitTick = ctx.tick;
+    if (rageFromDamage(d, a, damage, guarding)) ctx.events.emit('limitReady', { entityId: defender.id, characterId: defender.hero?.characterId ?? '' });
 
     if (guarding) {
       d.ki = Math.max(0, d.ki - C.guardKiDrainPerHit);
       defender.body!.vel.x = dirX * m.knockback * 0.35;
       defender.body!.vel.z = dirZ * m.knockback * 0.35;
       a.hitstop = d.hitstop = 4;
-      ctx.events.emit('hit', { attackerId: attacker.id, defenderId: defender.id, x: px, y: py, z: pz, damage: res.damage, crit: false, blocked: true, heavy: false, moveId: m.id });
+      ctx.events.emit('hit', { attackerId: attacker.id, defenderId: defender.id, x: px, y: py, z: pz, damage, crit: false, blocked: true, heavy: false, moveId: m.id });
     } else {
       a.comboCount = comboBefore + 1;
       a.comboTimer = C.comboResetTicks;
-      a.comboDamage += res.damage;
-      // Interrupt whatever the defender was doing.
-      d.moveId = null;
-      d.chargeHeld = 0;
+      a.comboDamage += damage;
+      // A limit's own impacts never refill the rage it just consumed.
+      if (m.technique?.slot !== 'limit' && rageFromHitLanded(a, d)) ctx.events.emit('limitReady', { entityId: attacker.id, characterId: attacker.hero?.characterId ?? '' });
       const body = defender.body!;
-      if (m.causes === 'launch') {
+      const armored = d.stunArmorTicks > 0 && d.state !== 'DEFEATED';
+      // Interrupt whatever the defender was doing (charging, focusing, attacking).
+      if (!armored) {
+        d.moveId = null;
+        d.chargeHeld = 0;
+      }
+      const causes = opts.minor ? 'hitstun' : m.causes;
+      const kb = opts.minor ? 0.6 : m.knockback;
+      if (armored) {
+        body.vel.x += dirX * kb * 0.2;
+        body.vel.z += dirZ * kb * 0.2;
+      } else if (causes === 'launch') {
         setState(defender, 'LAUNCHED');
-        body.vel.x = dirX * m.knockback;
-        body.vel.z = dirZ * m.knockback;
+        body.vel.x = dirX * kb;
+        body.vel.z = dirZ * kb;
         body.vel.y = m.lift;
         a.lastLaunchedTarget = defender.id;
         a.lastLaunchTick = ctx.tick;
-      } else if (m.causes === 'knockback') {
+      } else if (causes === 'knockback') {
         setState(defender, 'KNOCKBACK');
-        body.vel.x = dirX * m.knockback;
-        body.vel.z = dirZ * m.knockback;
+        body.vel.x = dirX * kb;
+        body.vel.z = dirZ * kb;
         body.vel.y = m.lift;
         ctx.pb.gain(a.team, 'knockdown');
       } else {
         setState(defender, 'HIT_STUN');
-        body.vel.x = dirX * m.knockback;
-        body.vel.z = dirZ * m.knockback;
+        body.vel.x = dirX * kb;
+        body.vel.z = dirZ * kb;
       }
-      d.hitstun = m.hitstun;
-      const heavy = m.kind !== 'light' && !(m.kind === 'ki' && m.damage < 10);
+      if (!armored) d.hitstun = m.hitstun;
+      const heavy = !opts.minor && m.kind !== 'light' && !(m.kind === 'ki' && m.damage < 10);
       a.hitstop = d.hitstop = heavy ? 6 : 3;
       if (defender.sprite) defender.sprite.flashTicks = 6;
 
-      ctx.pb.add(a.team, m.powerBalance);
+      ctx.pb.add(a.team, opts.minor ? m.powerBalance * 0.25 : m.powerBalance);
       if (m.finisher && a.comboCount >= 3) ctx.pb.gain(a.team, 'comboFinisherBonus');
       this.registerCoordination(attacker, defender, ctx);
-      ctx.events.emit('hit', { attackerId: attacker.id, defenderId: defender.id, x: px, y: py, z: pz, damage: res.damage, crit: res.crit, blocked: false, heavy, moveId: m.id });
+      ctx.events.emit('hit', { attackerId: attacker.id, defenderId: defender.id, x: px, y: py, z: pz, damage, crit: res.crit, blocked: false, heavy, moveId: m.id });
     }
 
     if (d.hp <= 0) {
       setState(defender, 'DEFEATED');
+      d.buff = null;
+      d.confusedTicks = 0;
+      d.blindTicks = 0;
       defender.body!.vel.x = dirX * 6;
       defender.body!.vel.z = dirZ * 6;
       defender.body!.vel.y = 3;
@@ -439,7 +726,7 @@ export class CombatSystem {
 
   private tryDash(e: Entity, ctx: CombatContext): boolean {
     const c = e.combatant!;
-    if (!spendKi(c, C.dashKiCost)) return false;
+    if (!spendKi(c, BALANCE.ki.costs.dash)) return false;
     const i = c.intent;
     let dx = i.moveX;
     let dz = i.moveZ;
@@ -491,44 +778,20 @@ export class CombatSystem {
     }
   }
 
-  private tryTeleport(e: Entity, ctx: CombatContext): boolean {
-    const c = e.combatant!;
-    if (!spendKi(c, C.teleportKiCost)) return false;
-    const i = c.intent;
-    const len = Math.hypot(i.moveX, i.moveZ) || 1;
-    const from = e.transform.pos;
-    ctx.events.emit('teleport', { entityId: e.id, fromX: from.x, fromY: from.y, fromZ: from.z });
-    from.x += (i.moveX / len) * C.teleportDistance;
-    from.z += (i.moveZ / len) * C.teleportDistance;
-    e.transform.prev.x = from.x;
-    e.transform.prev.z = from.z;
-    c.invuln = 12;
-    return true;
-  }
-
   private tryStartMeteo(e: Entity, ctx: CombatContext): boolean {
     const c = e.combatant!;
     const t = this.target(e, ctx);
     if (!t || !ctx.pb.canMeteo(c.team)) return false;
     if (t.combatant!.meteoVictim) return false;
     ctx.pb.consume(c.team);
-    let partnerId = -1;
-    if (c.passives.includes('joint')) {
-      for (const o of ctx.world.query('combatant', 'hero')) {
-        if (o !== e && isAlive(o) && o.combatant!.team === c.team && c.jointPartners.includes(o.hero!.characterId)) {
-          partnerId = o.id;
-          break;
-        }
-      }
-    }
-    c.meteo = { targetId: t.id, partnerId, tick: 0, damageDealt: false, defended: false };
+    c.meteo = { targetId: t.id, partnerId: -1, tick: 0, damageDealt: false, defended: false };
     setState(e, 'SPECIAL_ATTACK');
     c.moveId = c.meteoMoveId;
     t.combatant!.meteoVictim = true;
     t.combatant!.moveId = null;
     setState(t, 'HIT_STUN');
     t.combatant!.hitstun = C.meteoTicks;
-    ctx.events.emit('meteoStart', { attackerId: e.id, victimId: t.id, partnerId, team: c.team });
+    ctx.events.emit('meteoStart', { attackerId: e.id, victimId: t.id, partnerId: -1, team: c.team });
     return true;
   }
 
@@ -575,9 +838,10 @@ export class CombatSystem {
       }
     } else if (k === 82) {
       const move = getMove(c.meteoMoveId);
-      const mult = C.meteoDamageMultiplier * (c.passives.includes('meteo_plus') ? 1.25 : 1) * (ms.partnerId >= 0 ? 1.4 : 1);
-      const res = computeDamage(move, c.stats, v.stats, { comboCount: 0, guarding: false, critRoll: 1, attackerMultiplier: c.transformed ? 1.2 : 1, bonusMultiplier: mult * (ms.defended ? C.meteoDefendReduction : 1) });
+      const mult = C.meteoDamageMultiplier;
+      const res = computeDamage(move, c.stats, v.stats, { comboCount: 0, guarding: false, critRoll: 1, attackerMultiplier: attackMultiplier(e), bonusMultiplier: mult * (ms.defended ? C.meteoDefendReduction : 1) });
       v.hp = Math.max(0, v.hp - res.damage);
+      if (rageFromDamage(v, c, res.damage, ms.defended)) ctx.events.emit('limitReady', { entityId: victim.id, characterId: victim.hero?.characterId ?? '' });
       ms.damageDealt = true;
       const yaw = e.transform.yaw;
       victim.body!.vel.x = Math.sin(yaw) * move.knockback;

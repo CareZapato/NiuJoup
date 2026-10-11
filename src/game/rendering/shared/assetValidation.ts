@@ -1,5 +1,6 @@
 import type { AnimId } from '../../components';
-import { BATTLE_ANIMS, type SpriteManifest, WORLD_ANIMS } from './manifest';
+import { HERO_ANIMS } from './heroArt';
+import { BATTLE_ANIMS, frameRect, MAX_ATLAS_WIDTH, type SpriteManifest, WORLD_ANIMS } from './manifest';
 
 export interface AtlasImage {
   width: number;
@@ -13,8 +14,10 @@ export interface AssetIssue {
   message: string;
 }
 
-export const ATLAS_NAME = /^(char|enemy|npc)_[a-z0-9]+(?:_[a-z0-9]+)*_(world|battle)$/;
-export const FRAME_SIZE = { world: { w: 32, h: 48 }, battle: { w: 64, h: 96 } } as const;
+export const ATLAS_NAME = /^(char|enemy|npc)_[a-z0-9]+(?:_[a-z0-9]+)*_(world|battle|hero)$/;
+/** "hero" = one detailed atlas (Goku/Krillin/Yamcha) shared by exploration and combat. */
+export const FRAME_SIZE = { world: { w: 32, h: 48 }, battle: { w: 64, h: 96 }, hero: { w: 64, h: 96 } } as const;
+type AtlasMode = keyof typeof FRAME_SIZE;
 
 /** Converts bottom-up DataTexture rows to top-down PNG rows. */
 export function toTopDown(width: number, height: number, bottomUp: Uint8Array): Uint8Array {
@@ -60,19 +63,19 @@ export function validateAtlas(name: string, manifest: SpriteManifest, img: Atlas
   const warn = (message: string): void => void issues.push({ severity: 'warning', message });
 
   const m = ATLAS_NAME.exec(name);
-  if (!m) err(`nombre "${name}" no sigue <char|enemy|npc>_<id>_<world|battle>`);
-  const mode = (m?.[2] ?? (manifest.frameWidth > 32 ? 'battle' : 'world')) as 'world' | 'battle';
+  if (!m) err(`nombre "${name}" no sigue <char|enemy|npc>_<id>_<world|battle|hero>`);
+  const mode = (m?.[2] ?? (manifest.frameWidth > 32 ? 'battle' : 'world')) as AtlasMode;
   const want = FRAME_SIZE[mode];
   if (manifest.frameWidth !== want.w || manifest.frameHeight !== want.h) err(`frame ${manifest.frameWidth}x${manifest.frameHeight}, se esperaba ${want.w}x${want.h} para ${mode}`);
 
-  const ew = manifest.totalColumns * manifest.frameWidth;
-  const eh = manifest.views.length * manifest.frameHeight;
-  if (img.width !== ew || img.height !== eh) {
-    err(`atlas ${img.width}x${img.height}, el manifiesto implica ${ew}x${eh}`);
+  const dims = frameRect(manifest, 0, 0);
+  if (img.width !== dims.atlasW || img.height !== dims.atlasH) {
+    err(`atlas ${img.width}x${img.height}, el manifiesto implica ${dims.atlasW}x${dims.atlasH}`);
     return issues;
   }
+  if (dims.atlasW > MAX_ATLAS_WIDTH) warn(`atlas de ${dims.atlasW}px de ancho supera ${MAX_ATLAS_WIDTH}px (límite seguro en móviles)`);
 
-  const required = mode === 'world' ? WORLD_ANIMS : BATTLE_ANIMS;
+  const required = mode === 'world' ? WORLD_ANIMS : mode === 'hero' ? HERO_ANIMS : BATTLE_ANIMS;
   let col = 0;
   for (const [anim, def] of Object.entries(required) as [AnimId, { frames: number }][]) {
     const got = manifest.anims[anim];
@@ -81,7 +84,12 @@ export function validateAtlas(name: string, manifest: SpriteManifest, img: Atlas
     if (got && manifest.columns[anim] !== col) err(`columna de "${anim}" = ${manifest.columns[anim]}, se esperaba ${col}`);
     col += got?.frames ?? 0;
   }
-  if (mode === 'world' && manifest.views.length < 5) warn('los sprites de mundo deberían tener 5 vistas (8 direcciones con espejo)');
+  if (mode === 'hero') {
+    for (const [anim, def] of Object.entries(manifest.anims) as [AnimId, { frames: number; events?: Record<number, string> }][]) {
+      if (anim.startsWith('tech_') && !Object.values(def.events ?? {}).includes('release')) err(`"${anim}" no declara el evento "release" (el proyectil/impacto debe salir en ese frame)`);
+    }
+  }
+  if (mode !== 'battle' && manifest.views.length < 5) warn('los sprites de mundo deberían tener 5 vistas (8 direcciones con espejo)');
 
   const fw = manifest.frameWidth;
   const fh = manifest.frameHeight;
@@ -90,13 +98,14 @@ export function validateAtlas(name: string, manifest: SpriteManifest, img: Atlas
   if (transparent === 0) err('el atlas no tiene transparencia');
 
   const edgeFrames: string[] = [];
-  const groundAnims: AnimId[] = mode === 'world' ? ['idle', 'walk', 'run', 'interact', 'hit'] : [];
+  const groundAnims: AnimId[] = mode !== 'battle' ? ['idle', 'walk', 'run', 'interact', 'hit'] : [];
   manifest.views.forEach((view, row) => {
     for (const [anim, def] of Object.entries(manifest.anims) as [AnimId, { frames: number }][]) {
       const heights: number[] = [];
       for (let f = 0; f < def.frames; f++) {
         const c = (manifest.columns[anim] ?? 0) + f;
-        const b = frameBox(img, c * fw, row * fh, fw, fh);
+        const r = frameRect(manifest, c, row);
+        const b = frameBox(img, r.x, r.y, fw, fh);
         const where = `${anim}[${f}] vista ${view}`;
         if (b.opaque === 0) {
           err(`${where}: frame vacío`);

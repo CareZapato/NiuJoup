@@ -1,90 +1,91 @@
+import { BALANCE } from './balance';
 import type { AppearanceDef, CharacterDef, EnemyDef } from './types';
 
 const BASIC_MOVES = ['light_1', 'light_2', 'heavy_finisher', 'heavy', 'ki_blast'];
+const KI = BALANCE.ki.baseMax;
 
-/** Original demo characters. Replace appearance/names freely; systems only read ids. */
+/**
+ * Playable heroes. Internal ids are stable save keys from earlier builds and
+ * never shown to the player: kaien = Goku, oren = Krillin, suri = Yamcha.
+ * Visible names come only from `name`.
+ */
 export const CHARACTERS: Record<string, CharacterDef> = {
   kaien: {
     id: 'kaien',
-    name: 'Kaien',
-    archetype: 'Guerrero equilibrado',
-    description: 'Discípulo del maestro del valle. Bueno en todo, sin puntos débiles.',
-    baseStats: { maxHp: 120, maxKi: 100, physicalAttack: 14, kiAttack: 12, physicalDefense: 10, kiDefense: 10, speed: 10, technique: 10, criticalRate: 0.08, evasion: 0.05, stamina: 100 },
-    growth: { maxHp: 12, maxKi: 6, physicalAttack: 1.6, kiAttack: 1.4, physicalDefense: 1.2, kiDefense: 1.2, speed: 0.3, technique: 0.4 },
+    name: 'Goku',
+    archetype: 'Luchador Saiyajin',
+    description: 'Discípulo de la Escuela Tortuga. Equilibrado, con el Kamehameha desde el principio.',
+    baseStats: { maxHp: 120, maxKi: KI, physicalAttack: 14, kiAttack: 13, physicalDefense: 10, kiDefense: 10, speed: 11, technique: 10, criticalRate: 0.08, evasion: 0.05, stamina: 100 },
+    growth: { maxHp: 12, maxKi: 5, physicalAttack: 1.6, kiAttack: 1.5, physicalDefense: 1.2, kiDefense: 1.2, speed: 0.3, technique: 0.4 },
     appearance: {
-      palette: { skin: 0xf2c69a, hair: 0x1d1a24, outfit: 0xe8742a, outfitDark: 0xb04d14, accent: 0x2a4aa8, boots: 0x2a3c8c, aura: 0xfff07a },
-      hairStyle: 'spiky',
+      palette: { skin: 0xf6c49a, hair: 0x14121a, outfit: 0xf07a1e, outfitDark: 0xb8500e, accent: 0x2346a8, boots: 0x1f3a8c, aura: 0xfff07a },
+      hairStyle: 'goku',
       build: 'normal',
       scale: 1,
+      hero: 'goku',
     },
     innateMoves: BASIC_MOVES,
-    skillTree: 'warrior',
+    skillTree: 'goku',
     aiStyle: 'balanced',
-    meteoMoveId: 'meteo_strike',
-    jointPartners: ['suri', 'oren'],
-    transformations: ['awaken_form'],
-  },
-  suri: {
-    id: 'suri',
-    name: 'Suri',
-    archetype: 'Luchador ágil',
-    description: 'Veloz y técnica. Encadena combos largos y críticos frecuentes.',
-    baseStats: { maxHp: 100, maxKi: 90, physicalAttack: 12, kiAttack: 10, physicalDefense: 8, kiDefense: 8, speed: 13, technique: 13, criticalRate: 0.14, evasion: 0.1, stamina: 110 },
-    growth: { maxHp: 10, maxKi: 5, physicalAttack: 1.5, kiAttack: 1.1, physicalDefense: 0.9, kiDefense: 0.9, speed: 0.4, technique: 0.6 },
-    appearance: {
-      palette: { skin: 0xe9b48a, hair: 0x7a2a3a, outfit: 0x2aa89a, outfitDark: 0x17706a, accent: 0xf2e35a, boots: 0x3a2a1a, aura: 0x8affe8 },
-      hairStyle: 'ponytail',
-      build: 'slim',
-      scale: 0.95,
-    },
-    innateMoves: BASIC_MOVES,
-    skillTree: 'agile',
-    aiStyle: 'rushdown',
-    meteoMoveId: 'meteo_strike',
-    jointPartners: ['kaien'],
-    transformations: [],
-  },
-  oren: {
-    id: 'oren',
-    name: 'Oren',
-    archetype: 'Especialista en Ki',
-    description: 'Monje del templo. Ataca a distancia y controla el campo con Ki.',
-    baseStats: { maxHp: 95, maxKi: 140, physicalAttack: 9, kiAttack: 17, physicalDefense: 8, kiDefense: 13, speed: 10, technique: 12, criticalRate: 0.08, evasion: 0.06, stamina: 90 },
-    growth: { maxHp: 9, maxKi: 9, physicalAttack: 0.9, kiAttack: 2, physicalDefense: 0.9, kiDefense: 1.4, speed: 0.3, technique: 0.5 },
-    appearance: {
-      palette: { skin: 0xd9a37a, hair: 0xe8e8f0, outfit: 0x6a3aa8, outfitDark: 0x45247a, accent: 0xf2c84a, boots: 0x2a1a3a, aura: 0xc89aff },
-      hairStyle: 'bald',
-      build: 'normal',
-      scale: 1,
-    },
-    innateMoves: BASIC_MOVES,
-    skillTree: 'mystic',
-    aiStyle: 'zoner',
-    meteoMoveId: 'meteo_ki',
-    jointPartners: ['kaien'],
-    transformations: [],
-  },
-  toren: {
-    id: 'toren',
-    name: 'Toren',
-    archetype: 'Luchador defensivo',
-    description: 'Herrero de la aldea. Resiste castigo y protege a sus aliados.',
-    baseStats: { maxHp: 150, maxKi: 90, physicalAttack: 13, kiAttack: 9, physicalDefense: 15, kiDefense: 12, speed: 8, technique: 9, criticalRate: 0.05, evasion: 0.03, stamina: 130 },
-    growth: { maxHp: 16, maxKi: 5, physicalAttack: 1.4, kiAttack: 0.8, physicalDefense: 1.8, kiDefense: 1.4, speed: 0.2, technique: 0.3 },
-    appearance: {
-      palette: { skin: 0xc68a5e, hair: 0xd8582a, outfit: 0x5a6a3a, outfitDark: 0x3a4a22, accent: 0xb8b8c0, boots: 0x3a2a1a, aura: 0xffb04a },
-      hairStyle: 'mohawk',
-      build: 'broad',
-      scale: 1.08,
-    },
-    innateMoves: BASIC_MOVES,
-    skillTree: 'guardian',
-    aiStyle: 'tank',
     meteoMoveId: 'meteo_strike',
     jointPartners: [],
     transformations: [],
+    startingSlots: ['kamehameha', null, null, null],
+    limitMoveId: 'ki_volley',
+    mandatoryTechniques: ['kamehameha'],
+  },
+  oren: {
+    id: 'oren',
+    name: 'Krillin',
+    archetype: 'Especialista en técnicas',
+    description: 'Compañero de Goku en la Escuela Tortuga. Bajo y compacto; domina el Kienzan y el Taiyōken.',
+    baseStats: { maxHp: 105, maxKi: KI, physicalAttack: 11, kiAttack: 15, physicalDefense: 9, kiDefense: 12, speed: 11, technique: 13, criticalRate: 0.1, evasion: 0.07, stamina: 95 },
+    growth: { maxHp: 10, maxKi: 6, physicalAttack: 1.2, kiAttack: 1.8, physicalDefense: 1, kiDefense: 1.3, speed: 0.3, technique: 0.6 },
+    appearance: {
+      palette: { skin: 0xf3c29c, hair: 0x000000, outfit: 0xf07a1e, outfitDark: 0xb8500e, accent: 0x2346a8, boots: 0x1f3a8c, aura: 0xfff4c0 },
+      hairStyle: 'krillin',
+      build: 'short',
+      scale: 0.86,
+      hero: 'krillin',
+    },
+    innateMoves: BASIC_MOVES,
+    skillTree: 'krillin',
+    aiStyle: 'zoner',
+    meteoMoveId: 'meteo_strike',
+    jointPartners: [],
+    transformations: [],
+    startingSlots: ['kienzan', null, null, null],
+    limitMoveId: 'renzoku_kienzan',
+    mandatoryTechniques: ['kienzan', 'taiyoken'],
+  },
+  suri: {
+    id: 'suri',
+    name: 'Yamcha',
+    archetype: 'Luchador veloz',
+    description: 'Antiguo bandido del desierto. Rápido y agresivo; ataca con el Rōgafūfūken y guía el Sōkidan.',
+    baseStats: { maxHp: 110, maxKi: KI, physicalAttack: 14, kiAttack: 11, physicalDefense: 9, kiDefense: 9, speed: 13, technique: 12, criticalRate: 0.13, evasion: 0.09, stamina: 110 },
+    growth: { maxHp: 11, maxKi: 5, physicalAttack: 1.6, kiAttack: 1.2, physicalDefense: 1, kiDefense: 1, speed: 0.4, technique: 0.5 },
+    appearance: {
+      palette: { skin: 0xeab48c, hair: 0x14121a, outfit: 0xf07a1e, outfitDark: 0xb8500e, accent: 0x2346a8, boots: 0x1f3a8c, aura: 0xc8f0ff },
+      hairStyle: 'yamcha',
+      build: 'normal',
+      scale: 1.02,
+      hero: 'yamcha',
+    },
+    innateMoves: BASIC_MOVES,
+    skillTree: 'yamcha',
+    aiStyle: 'rushdown',
+    meteoMoveId: 'meteo_strike',
+    jointPartners: [],
+    transformations: [],
+    startingSlots: ['rogafufuken', null, null, null],
+    limitMoveId: 'shin_rogafufuken',
+    mandatoryTechniques: ['rogafufuken', 'sokidan'],
   },
 };
+
+/** Ids that existed in earlier saves but are no longer playable. */
+export const RETIRED_CHARACTERS = ['toren'];
 
 export const ENEMIES: Record<string, EnemyDef> = {
   sprout: {
@@ -152,7 +153,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
   },
 };
 
-export const STARTING_PARTY = ['kaien', 'suri', 'oren'];
+export const STARTING_PARTY = ['kaien', 'oren', 'suri'];
 
 export const NPC_APPEARANCES: Record<string, AppearanceDef> = {
   master: {

@@ -169,19 +169,17 @@ describe('combat', () => {
     expect(g.fsm.state).toBe('ACTIVE_COMBAT');
   });
 
-  it('dominance enables the Meteo Attack for the player team', () => {
+  it('player dominance feeds rage; the player never triggers a Meteo (limit key without rage does nothing)', () => {
     const g = newGame();
     enterCombat(g);
     g.debugAddPower(100);
     expect(g.pb.dominance).toBe('player');
     const me = g.controlled()!.combatant!;
     runUntil(g, () => me.state === 'IDLE' || me.state === 'FLY' || me.state === 'MOVE', 120);
-    const victims = enemies(g);
+    const before = me.rage;
+    tick(g, 60);
+    expect(me.rage).toBeGreaterThan(before);
     press(g, 'special');
-    expect(me.meteo).not.toBeNull();
-    expect(g.pb.dominance).toBeNull();
-    const hpBefore = victims.reduce((a, e) => a + e.combatant!.hp, 0);
-    runUntil(g, () => me.meteo === null, 200);
-    expect(victims.reduce((a, e) => a + e.combatant!.hp, 0)).toBeLessThan(hpBefore);
+    expect(me.meteo).toBeNull();
   });
 });

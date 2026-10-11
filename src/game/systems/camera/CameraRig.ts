@@ -57,6 +57,53 @@ export function worldToScreen(out: { x: number; y: number }, wx: number, wz: num
 /** Yaw that puts direction (dx,dz) along screen-right: player left, enemies right. */
 export const yawForScreenRight = (dx: number, dz: number): number => Math.atan2(-dz, dx);
 
+/**
+ * Keeps the visible ground footprint inside the map (+margin) so the view never
+ * shows past the world edge. When the map is smaller than the view along an
+ * axis, the footprint is centred instead. Low pitches that see the horizon cap
+ * the far edge at `farCap` × distance; the exterior forest covers the rest.
+ */
+export function clampFocusToMap(pose: CameraPose, mapW: number, mapH: number, aspect: number, margin: number, farCap = 1.3): void {
+  const d = pose.distance;
+  const p = pose.pitch;
+  const v = (pose.fov * Math.PI) / 360;
+  const hf = Math.atan(Math.tan(v) * Math.max(0.2, aspect));
+  const H = Math.sin(p) * d;
+  const B = Math.cos(p) * d;
+  const aFar = p - v;
+  const aNear = Math.min(p + v, Math.PI / 2 - 1e-3);
+  const far = aFar > 0.05 ? Math.min(H / Math.tan(aFar) - B, d * farCap) : d * farCap;
+  const near = B - H / Math.tan(aNear);
+  const slantFar = Math.hypot(H, B + far);
+  const slantNear = Math.hypot(H, B - near);
+  const halfFar = slantFar * Math.tan(hf);
+  const halfNear = slantNear * Math.tan(hf);
+  const fx = forwardX(pose.yaw);
+  const fz = forwardZ(pose.yaw);
+  const rx = rightX(pose.yaw);
+  const rz = rightZ(pose.yaw);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  const corner = (along: number, side: number): void => {
+    const ox = fx * along + rx * side;
+    const oz = fz * along + rz * side;
+    minX = Math.min(minX, ox);
+    maxX = Math.max(maxX, ox);
+    minZ = Math.min(minZ, oz);
+    maxZ = Math.max(maxZ, oz);
+  };
+  corner(far, halfFar);
+  corner(far, -halfFar);
+  corner(-near, halfNear);
+  corner(-near, -halfNear);
+  const axis = (f: number, lo: number, hi: number, size: number): number =>
+    hi - lo > size + 2 * margin ? size / 2 - (lo + hi) / 2 : clamp(f, -margin - lo, size + margin - hi);
+  pose.focus.x = axis(pose.focus.x, minX, maxX, mapW);
+  pose.focus.z = axis(pose.focus.z, minZ, maxZ, mapH);
+}
+
 export class CameraRig {
   readonly pose = makePose();
   mode: CameraMode = 'ExplorationCamera';

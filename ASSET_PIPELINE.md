@@ -1,6 +1,37 @@
 # Pipeline de assets
 
-Todo el arte actual es **original y procedural**. Se genera en código (`src/game/rendering/shared/characterArt.ts`, `worldArt.ts`) a partir de datos de apariencia (`content/characters.ts`: paleta, constitución, peinado, accesorio). No hay sprites, música ni tipografías de terceros con restricciones: las fuentes son VT323 y Press Start 2P, ambas bajo licencia OFL.
+Todo el arte actual es **original y procedural**. Se genera en código (`src/game/rendering/shared/heroArt.ts`, `characterArt.ts`, `worldArt.ts`) a partir de datos de apariencia (`content/characters.ts`: paleta, constitución, peinado, accesorio). No hay sprites, música ni tipografías de terceros con restricciones: las fuentes son VT323 y Press Start 2P, ambas bajo licencia OFL.
+
+## Goku, Krillin y Yamcha (atlas `hero`)
+
+Los tres personajes jugables usan un generador específico y más detallado (`rendering/shared/heroArt.ts`). Las otras entidades siguen con `characterArt.ts`.
+
+- **Un solo atlas para exploración y combate**: frames de 64×96 px, 5 vistas (8 direcciones con espejo) y 31 animaciones (70 columnas). Se envuelve en bloques de 2048 px de ancho (`gridColumns`, `frameRect`), que es el límite seguro de textura en móviles.
+- **Animaciones**: idle, idle_wait, walk, run, jump, fall, interact, pickup, hit, knockback, defeat, victory, stance, dash, dodge, hover, fly, guard, charge, punch, kick, kiblast, special y confused. A ellas se suman las poses de técnica `tech_kamehameha`, `tech_kienzan`, `tech_taiyoken`, `tech_sokidan`, `tech_wolf_fang`, `tech_kaioken` y `tech_barrage`.
+- **Poses de técnica**: tres frames (preparación, liberación y recuperación) con el evento `release` en el frame 1. En juego, `AnimationSystem.techniquePhase` elige el frame a partir del frame data de la técnica: la liberación coincide con el tick en que sale el proyectil, el rayo o el impacto. Los proyectiles nacen en la simulación, no en la animación.
+- **Rasgos distintivos**: pelo en punta de Goku, Krillin calvo con seis puntos en la frente y más bajo (piernas ×0,8), pelo largo de Yamcha con cicatrices. Los tres llevan gi naranja con camiseta, muñequeras y botas azules, y el símbolo de la escuela en el pecho y, más grande, en la espalda.
+- **Filtrado**: magnificación nearest (píxel nítido) y minificación lineal para el héroe, para evitar el parpadeo al dibujarse más pequeño que su resolución.
+- **Nombres**: `char_<id>_hero`. El validador exige 64×96, las animaciones de `HERO_ANIMS` y el evento `release` en todas las técnicas, y avisa si el ancho supera 2048 px.
+
+> **Honestidad sobre el arte**: estos sprites son **placeholders procedurales** dibujados por código. **No son arte final** ni una reproducción de las imágenes de referencia: esas imágenes no estaban disponibles en el disco durante la implementación. Están hechos a partir de las paletas y rasgos descritos en `content/characters.ts`. Para el arte final hay que dibujar PNG siguiendo la plantilla de `assets/generated/sprites/char_<id>_hero.png` y su manifiesto, y añadir el cargador de PNG en tiempo de ejecución (ver la última sección).
+
+Estado del validador: 15 atlas, 0 errores, 34 avisos. Los avisos son de los héroes:
+
+- los pies despegados en los frames de carrera, que son un rebote intencionado;
+- 6 frames de perfil, como el Kamehameha extendido, que tocan el borde lateral de la celda.
+
+## Modelo de resolución
+
+Hay cuatro conceptos independientes:
+
+| Concepto | Qué es | Dónde se decide |
+|---|---|---|
+| Resolución de pantalla | Tamaño CSS/dp de la ventana. El layout, el HUD y los controles se miden en dp y nunca se encogen por debajo de su tamaño legible | React Native (`useWindowDimensions`) |
+| Resolución interna | Tamaño del drawing buffer de WebGL: pantalla × DPR | `rendering/shared/resolution.ts` y `ui/GameCanvas.tsx` |
+| Resolución de sprite | Texels del atlas (64×96 los héroes), fija | Generadores de arte y manifiestos |
+| Zoom | Distancia y FOV de la cámara (`BALANCE.camera`), independiente de las otras tres | `Game.ts` y `CameraRig` |
+
+La referencia es 1920×1080. La altura interna se limita a 1080 filas (`BALANCE.render.maxInternalHeight`) y no baja de 540 si el dispositivo puede darlas. El DPR máximo es 2 en calidad alta y 1 en baja o en móvil, así que un teléfono **no** se fuerza a renderizar a 1080p. Si la media de 2 s cae por debajo de 45 FPS, el DPR baja un 15 %; por encima de 57 FPS se recupera. El modo debug muestra pantalla, resolución interna, DPR, factor respecto a 1080p, resolución de sprite y zoom.
 
 ## Formato de los atlas de personaje
 
@@ -37,7 +68,7 @@ Están definidas en `WORLD_ANIMS` y `BATTLE_ANIMS` (`rendering/shared/manifest.t
 }
 ```
 
-`columns` es la columna donde empieza cada animación. El atlas mide `totalColumns × frameWidth` de ancho y `views.length × frameHeight` de alto. `hurtbox` es solo una referencia para autores: la colisión real usa las cápsulas definidas en `content/characters.ts` y es independiente del sprite.
+`columns` es la columna donde empieza cada animación. Sin envoltura, el atlas mide `totalColumns × frameWidth` de ancho y `views.length × frameHeight` de alto. Con `gridColumns` (atlas de héroe), las columnas se envuelven en bloques de `gridColumns` columnas apilados verticalmente. `frameRect(manifest, col, vista)` devuelve la posición exacta. Los manifiestos sin `gridColumns` se tratan como una sola tira. `hurtbox` es solo una referencia para autores: la colisión real usa las cápsulas definidas en `content/characters.ts` y es independiente del sprite.
 
 ### Nombres
 
@@ -71,7 +102,7 @@ Avisos:
 - altura del personaje inconsistente entre frames (más de 1.35×);
 - píxeles pegados a los bordes laterales, lo que indica arte recortado o que invade la celda vecina.
 
-Estado actual: 20 atlas, 0 errores y 0 avisos. En la primera versión del validador había 529 avisos; la mayoría eran manos que se salían de la celda en algunos frames. Se corrigió el generador, no el validador.
+Estado de los atlas antiguos (`world`/`battle`): 0 errores y 0 avisos. En la primera versión del validador había 529 avisos; la mayoría eran manos que se salían de la celda en algunos frames. Se corrigió el generador, no el validador.
 
 ## Sustituir placeholders por arte hecho a mano
 

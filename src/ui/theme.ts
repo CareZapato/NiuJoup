@@ -14,6 +14,7 @@ export const COLORS = {
   hpLow: '#e8443a',
   ki: '#4ab8f2',
   xp: '#c89aff',
+  rage: '#ff7a2a',
   player: '#4ab8ff',
   enemy: '#ff5a4a',
   gold: '#f2c84a',
