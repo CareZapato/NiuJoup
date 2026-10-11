@@ -1,0 +1,32 @@
+{
+  "generatedBy": "scripts/assets.ts export",
+  "sprites": [
+    "char_kaien_world",
+    "char_kaien_battle",
+    "char_suri_world",
+    "char_suri_battle",
+    "char_oren_world",
+    "char_oren_battle",
+    "char_toren_world",
+    "char_toren_battle",
+    "enemy_sprout_world",
+    "enemy_sprout_battle",
+    "enemy_bandit_world",
+    "enemy_bandit_battle",
+    "enemy_golem_world",
+    "enemy_golem_battle",
+    "npc_master_world",
+    "npc_master_battle",
+    "npc_villager_world",
+    "npc_villager_battle",
+    "npc_smith_world",
+    "npc_smith_battle"
+  ],
+  "world": [
+    "terrain_valley",
+    "trees_valley",
+    "water_valley",
+    "props_valley",
+    "fx_common"
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "id": "char:oren:world",
+  "frameWidth": 32,
+  "frameHeight": 48,
+  "pivot": {
+    "x": 16,
+    "y": 46
+  },
+  "views": [
+    "S",
+    "SE",
+    "E",
+    "NE",
+    "N"
+  ],
+  "anims": {
+    "idle": {
+      "frames": 2,
+      "fps": 2,
+      "loop": true
+    },
+    "walk": {
+      "frames": 4,
+      "fps": 8,
+      "loop": true,
+      "events": {
+        "1": "footstep",
+        "3": "footstep"
+      }
+    },
+    "run": {
+      "frames": 4,
+      "fps": 12,
+      "loop": true,
+      "events": {
+        "1": "footstep",
+        "3": "footstep"
+      }
+    },
+    "jump": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "interact": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "hit": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "defeat": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    }
+  },
+  "columns": {
+    "idle": 0,
+    "walk": 2,
+    "run": 6,
+    "jump": 10,
+    "interact": 11,
+    "hit": 12,
+    "defeat": 13
+  },
+  "totalColumns": 14,
+  "hurtbox": {
+    "width": 12.8,
+    "height": 43.2
+  }
+}

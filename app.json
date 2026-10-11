@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "legends-rpg",
+    "name": "Legends RPG",
     "slug": "legends-rpg",
-    "version": "1.0.0",
-    "orientation": "portrait",
+    "version": "0.1.0",
+    "orientation": "landscape",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#05060f",
     "ios": {
       "supportsTablet": true
     },
@@ -19,7 +20,13 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "name": "Legends RPG"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-asset",
+      "expo-font"
+    ]
   }
 }

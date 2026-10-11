@@ -6,7 +6,12 @@ node_modules/
 # Expo
 .expo/
 dist/
+dist-web/
+dist-android/
 web-build/
+
+# Smoke test screenshots
+smoke-output/
 expo-env.d.ts
 
 # Native

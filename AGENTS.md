@@ -25,9 +25,17 @@ Run lint and typecheck before declaring any task done.
 
 ## Navigation & Routing
 
-- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
-- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
-- Docs: https://docs.expo.dev/router/introduction.md
+- This project intentionally does **not** use Expo Router (it is not installed). The game is a single full-screen GL canvas; menus and HUD are overlays driven by `GameStateMachine` (`src/game/core`). A router would unmount the GL context and duplicate state. See ARCHITECTURE.md → "Navegación".
+- Entry: `index.ts` → `App.tsx` → `src/app/AppRoot.tsx`. `src/app/` is the app root, not a routes folder.
+
+## Project rules
+
+- `src/game/**` (except `rendering/`) must stay free of React, React Native and Three.js imports so the whole game runs headless in vitest.
+- Gameplay numbers go in `src/game/content/balance.ts` / content files, not in systems.
+- Player and AI both act through `Intent`; never let AI mutate combat state directly.
+- Never report a save as done before `SaveManager` finishes the verified write.
+- Verify with `npm run check` and `npm run smoke:web`; record what was and wasn't verified in DEVELOPMENT_PROGRESS.md.
+- Do not rewrite text files with PowerShell 5 `Get-Content`/`Set-Content` (it corrupts UTF-8 accents).
 
 ## Building with EAS
 

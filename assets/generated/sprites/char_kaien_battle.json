@@ -1,0 +1,116 @@
+{
+  "id": "char:kaien:battle",
+  "frameWidth": 64,
+  "frameHeight": 96,
+  "pivot": {
+    "x": 32,
+    "y": 94
+  },
+  "views": [
+    "S",
+    "E",
+    "N"
+  ],
+  "anims": {
+    "idle": {
+      "frames": 2,
+      "fps": 3,
+      "loop": true
+    },
+    "hover": {
+      "frames": 2,
+      "fps": 3,
+      "loop": true
+    },
+    "fly": {
+      "frames": 2,
+      "fps": 8,
+      "loop": true
+    },
+    "punch": {
+      "frames": 3,
+      "fps": 18,
+      "loop": false,
+      "events": {
+        "1": "impact"
+      }
+    },
+    "kick": {
+      "frames": 3,
+      "fps": 14,
+      "loop": false,
+      "events": {
+        "1": "impact"
+      }
+    },
+    "guard": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "hit": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "knockback": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "dash": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "charge": {
+      "frames": 2,
+      "fps": 10,
+      "loop": true
+    },
+    "kiblast": {
+      "frames": 2,
+      "fps": 10,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "special": {
+      "frames": 2,
+      "fps": 6,
+      "loop": true
+    },
+    "defeat": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "victory": {
+      "frames": 2,
+      "fps": 3,
+      "loop": true
+    }
+  },
+  "columns": {
+    "idle": 0,
+    "hover": 2,
+    "fly": 4,
+    "punch": 6,
+    "kick": 9,
+    "guard": 12,
+    "hit": 13,
+    "knockback": 14,
+    "dash": 15,
+    "charge": 16,
+    "kiblast": 18,
+    "special": 20,
+    "defeat": 22,
+    "victory": 23
+  },
+  "totalColumns": 25,
+  "hurtbox": {
+    "width": 25.6,
+    "height": 86.4
+  }
+}
