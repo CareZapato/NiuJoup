@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import type { UiSnapshot } from '../../game/Game';
 import { Bar, Panel, Txt } from '../components/primitives';
 import { useGameUi, useServices } from '../GameContext';
@@ -210,13 +210,18 @@ function ExplorationHud({ ui }: { ui: UiSnapshot }) {
 }
 
 function Toasts({ ui }: { ui: UiSnapshot }) {
+  const { width, height } = useWindowDimensions();
   const color = { info: COLORS.text, good: COLORS.good, warn: COLORS.warn, quest: COLORS.quest } as const;
   // The focus panel owns the top of the screen during its 3 s window.
   if (ui.focus.active) return null;
+  const portrait = height > width;
+  const combat = ui.state === 'ACTIVE_COMBAT' || ui.state === 'ENCOUNTER_TRANSITION' || ui.state === 'COMBAT_VICTORY' || ui.state === 'COMBAT_DEFEAT';
+  // Under the party panel in portrait, and between the side panels in landscape, so the text never covers them or the buttons.
+  const top = combat ? (portrait ? 118 : 64) : portrait ? 196 : 72;
   return (
-    <View style={styles.toasts} pointerEvents="none">
-      {ui.toasts.slice(-4).map((t) => (
-        <View key={t.id} style={styles.toast}>
+    <View style={[styles.toasts, { top, paddingHorizontal: 8 }]} pointerEvents="none">
+      {ui.toasts.slice(-3).map((t) => (
+        <View key={t.id} style={[styles.toast, { maxWidth: Math.min(360, width - (portrait ? 16 : 280)) }]}>
           <Txt size={19} color={color[t.tone]}>
             {t.text}
           </Txt>

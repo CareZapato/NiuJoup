@@ -119,7 +119,7 @@ Se eligió un ECS ligero sobre objetos: cada entidad es un objeto con componente
   - Kaioken: aura roja y pulso de tensión rojo en el cuerpo.
 - **Filtro de concentración**: todos los materiales del mundo (terreno, agua, exterior, árboles, sprites, sombras, auras, efectos y proyectiles) se parchean con `onBeforeCompile` y comparten dos uniforms: desaturación de 0,85 y oscurecimiento de 0,22, multiplicados por `focusFilter`. El cielo se filtra igual. El HUD y los marcadores no se parchean y siguen legibles.
 - **Bordes del mapa**:
-  - `clampFocusToMap` (`CameraRig`) limita el foco de la cámara para que la huella visible del suelo no salga del mapa más `BALANCE.camera.edgeMargin`, o centra la vista si el mapa es más pequeño que ella. Usa el aspect real (`Game.viewAspect`, escrito por el renderer).
+  - El foco sigue al personaje elegido (líder al caminar, luchador controlado en combate) y no se recentra en el mapa. El aspect real (`Game.viewAspect`) no desplaza ese foco. Fuera del mapa, el exterior de bosque cubre el suelo.
   - La cámara calcula la altura con `TileMap.visualHeightAt`, que limita las coordenadas al mapa en vez de devolver el muro de 99 de fuera de los límites que la empujaba hacia el cielo.
   - El agua se limita al mapa. Fuera hay un marco de suelo de bosque y un anillo de árboles instanciados (más disperso en calidad baja).
   - Los árboles pegados al borde inferior de la vista se ocultan (`BALANCE.render.treeCutaway`) para que no tapen la pantalla en las esquinas sur.

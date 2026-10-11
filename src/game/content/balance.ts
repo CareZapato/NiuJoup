@@ -157,9 +157,12 @@ export const BALANCE = {
   camera: {
     zoomOut: 1.15,
     exploration: { distance: 15, pitch: 1.02, fov: 40 },
-    combat: { base: 6.5, perSpread: 0.85, min: 7, max: 17, pitch: 0.34, fov: 50 },
-    /** Extra world units visible past the playable edge before the camera stops. */
-    edgeMargin: 1.5,
+    /**
+     * Combat stays closer than exploration (`max` × zoomOut < exploration distance)
+     * and keeps a downward angle so the fight does not swing to the horizon.
+     * The look-at point is always the controlled fighter, never the map centre.
+     */
+    combat: { base: 6.2, perSpread: 0.45, min: 6.5, max: 10.5, pitch: 0.72, fov: 46 },
   },
   /**
    * Resolution model: the layout is authored against a 1920x1080 reference;

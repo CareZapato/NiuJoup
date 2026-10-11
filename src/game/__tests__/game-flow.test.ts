@@ -74,7 +74,8 @@ describe('seamless world -> combat transition', () => {
     const ticks = runUntil(g, () => g.fsm.state === 'ACTIVE_COMBAT', 120);
     expect(ticks).toBeLessThanOrEqual(BALANCE.transition.encounterTicks + 2);
     expect(g.camera.mode).toBe('CombatCamera');
-    expect(g.camera.pose.pitch).toBeLessThan(0.6);
+    expect(g.camera.pose.pitch).toBeLessThan(BALANCE.camera.exploration.pitch);
+    expect(g.camera.pose.pitch).toBeGreaterThan(0.55);
   });
 
   it('allies act during the transition before the player regains control', () => {

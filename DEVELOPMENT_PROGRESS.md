@@ -56,7 +56,7 @@ Todos se comprobaron con `npm run smoke:web`. Ese smoke test exporta la build we
 
 - `tsc --noEmit` en modo estricto: 0 errores;
 - `expo lint`: 0 problemas;
-- `vitest run`: **155 tests** en 9 ficheros, todos verdes;
+- `vitest run`: **238 tests** en 10 ficheros, todos verdes;
 - `assets:validate`: 15 atlas, 0 errores y 34 avisos. Los avisos vienen de los atlas de héroe: pies despegados en la carrera, que es un rebote intencionado, y 6 frames de perfil que tocan el borde de la celda.
 
 Qué cubren los tests:
@@ -102,7 +102,8 @@ Qué cubren los tests:
 - **Ki, furia y objetivos múltiples** según `BALANCE` (valores abajo). Hostilidad centralizada sin fuego amigo, `maxTargets`, línea de visión y un impacto por objetivo y lanzamiento.
 - **Cámara**:
   - un 15 % más alejada (`zoomOut` 1,15) conservando el acercamiento del encuentro;
-  - el foco se limita al mapa con el aspect real;
+  - el foco queda en el centro del personaje elegido al caminar y en combate, en PC, móvil horizontal y vertical; no se recentra en el mapa ni se aleja al empezar la batalla;
+  - los botones se reparten en rejilla (joystick a la izquierda, ataques a la derecha, técnicas encima) y se encogen si no caben, para no pisarse;
   - altura visual limitada al mapa (adiós al muro de 99 fuera de los límites);
   - exterior de suelo de bosque y anillo de árboles; agua solo dentro del mapa;
   - recorte de árboles pegados a la cámara.
@@ -128,7 +129,7 @@ Qué cubren los tests:
 | Costes de ki | disparo 3 · cuerpo a cuerpo 0 · dash 4 · Kamehameha 30 · Kaioken 15 · Teletransportación 15 · Kienzan 25 · Taiyōken 20 · Kakusandan 28 · Sōkidan 30 · Rōgafūfūken 10 · límite 0 |
 | Concentración | ×0,20 · ventana de 3 s reales · enfriamiento de 8 s · penalización al fallar de 5 de ki · confusión de 90 ticks (1,5 s) con ×1,25 de daño · un límite fallido pierde el 50 % de la furia · filtro: desaturación 0,85 y oscurecimiento 0,22 |
 | Furia | 0–100 · 110 × (daño ÷ PV máximos) · ×0,5 si se bloquea · 0,6 por golpe acertado · dominio 1,5/s |
-| Cámara | zoomOut 1,15 · exploración: distancia 15, pitch 1,02 y FOV 40 · margen de borde 1,5 |
+| Cámara | zoomOut 1,15 · exploración: distancia 15, pitch 1,02 y FOV 40 · combate: base 6,2, máximo 10,5, pitch 0,72 y FOV 46 (siempre más cerca que al caminar) |
 | Render | referencia 1920×1080 · altura interna 540–1080 · DPR máximo 2 (alto) o 1 (bajo/móvil) · baja ×0,85 por debajo de 45 FPS y sube ×1,08 por encima de 57 · recorte de árboles a 2,5 |
 | IA y anti-bloqueo | primera técnica de un aliado a los 150 ticks y después cada 300 · anti-bloqueo tras 150 ticks aturdido (decae 3 por tick libre) · blindaje de 60 ticks |
 
@@ -137,7 +138,7 @@ Qué cubren los tests:
 - `npm run check`:
   - tsc: 0 errores;
   - lint: 0 problemas;
-  - vitest: 155/155;
+  - vitest: 238/238;
   - assets: 0 errores.
 - Tests nuevos de esta iteración:
   - `focus.test.ts` (29): tiempo, filtro, confusión, interrupción, enfriamiento, ki, furia, límites, objetivos múltiples, ramas obligatorias, nombres, editor de ranuras y anti-bloqueo;
@@ -194,7 +195,7 @@ Está implementado con comportamiento real y cubierto por tests unitarios o de f
 ## Problemas técnicos encontrados y resueltos
 
 - **RN-web `Pressable` descarta toques rápidos**: tiene un retardo de pulsación de 50 ms por defecto, y un toque más corto nunca dispara la acción. Primero se resolvió con `delayPressIn: 0` y `input.pulse()`. Después se sustituyó por una capa propia de eventos de puntero y contadores de pulsación en `RawInput`, que tampoco pierde toques más cortos que un tick.
-- **Bordes celestes del mapa**: fuera de los límites, `heightAt` devuelve 99 y la cámara subía hacia la niebla y el cielo. A eso se sumaba un plano de agua 20 casillas más grande que el mapa. Se resolvió con `visualHeightAt`, `clampFocusToMap`, agua limitada al mapa y el exterior de bosque.
+- **Bordes celestes del mapa**: fuera de los límites, `heightAt` devuelve 99 y la cámara subía hacia la niebla y el cielo. A eso se sumaba un plano de agua 20 casillas más grande que el mapa. Se resolvió con `visualHeightAt`, agua limitada al mapa y el exterior de bosque. El foco ya no se aparta del personaje para esconder el borde.
 - **CDP `Input.dispatchTouchEvent`**: para levantar un solo dedo hay que enviar `touchEnd` con **solo** ese punto. Un `touchMove` sin él no lo suelta, y un `touchEnd` con los dedos restantes suelta precisamente esos.
 - **La fila de botones táctiles tapaba el botón de salto** en pantallas bajas: se movió al centro inferior.
 - **Los aliados terminaban los combates solos** antes de que el jugador participase: se subió la vida de los enemigos y se añadió la regla de "dejar espacio al líder" a la Utility AI.

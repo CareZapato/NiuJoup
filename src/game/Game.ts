@@ -18,7 +18,7 @@ import { DEFAULT_SETTINGS, type BindAction, type Settings, SLOT_ACTIONS } from '
 import { CombatAI } from './systems/ai/CombatAI';
 import { ExplorerAI } from './systems/ai/ExplorerAI';
 import { POSE_ANIM, updateAnimations } from './systems/animation/AnimationSystem';
-import { CameraRig, type CameraPose, clampFocusToMap, makePose, screenToWorld, worldToScreen, yawForScreenRight } from './systems/camera/CameraRig';
+import { CameraRig, type CameraPose, makePose, screenToWorld, worldToScreen, yawForScreenRight } from './systems/camera/CameraRig';
 import { type Arena, canAct, type CombatContext, CombatSystem, techniqueBlocker } from './systems/combat/CombatSystem';
 import { chargeKi, penalizeKi, regenKi, spendKi } from './systems/combat/ki';
 import { PowerBalance } from './systems/combat/PowerBalance';
@@ -1618,7 +1618,7 @@ export class Game {
   explorationPose(out: CameraPose): CameraPose {
     const l = this.leader();
     out.focus.x = l.transform.pos.x;
-    out.focus.y = l.transform.pos.y + 0.6;
+    out.focus.y = l.transform.pos.y;
     out.focus.z = l.transform.pos.z;
     const X = BALANCE.camera.exploration;
     out.yaw = 0;
@@ -1644,19 +1644,11 @@ export class Game {
     const ctl = this.controlled() ?? this.leader();
     const target = this.world.get(ctl.combatant!.targetId);
     const p = ctl.transform.pos;
-    let fx = p.x;
-    let fy = p.y;
-    let fz = p.z;
-    if (target && isAlive(target)) {
-      fx = p.x * 0.6 + target.transform.pos.x * 0.4;
-      fy = p.y * 0.6 + target.transform.pos.y * 0.4;
-      fz = p.z * 0.6 + target.transform.pos.z * 0.4;
-    }
-    let spread = 0;
-    for (const e of this.engaged()) {
-      if (e.combatant!.state === 'DEFEATED') continue;
-      spread = Math.max(spread, Math.hypot(e.transform.pos.x - fx, e.transform.pos.z - fz));
-    }
+    // The chosen fighter stays at the centre. Distance only reacts to the
+    // current target, and only up to a cap, so a spread-out party cannot
+    // pull the camera off the battle or farther than exploration.
+    let gap = 4.5;
+    if (target && isAlive(target)) gap = Math.min(7, Math.hypot(target.transform.pos.x - p.x, target.transform.pos.z - p.z));
     const camRot = (this.held('camRight') ? 1 : 0) - (this.held('camLeft') ? 1 : 0);
     if (camRot !== 0) {
       this.combatYaw += camRot * 2.2 * TICK_DT;
@@ -1668,13 +1660,13 @@ export class Game {
       const pick = Math.abs(wrapAngle(base - this.combatYaw)) < Math.abs(wrapAngle(alt - this.combatYaw)) ? base : alt;
       this.combatYaw = lerpAngle(this.combatYaw, pick, (this.settings.reducedMotion ? 0.15 : 0.5) * TICK_DT);
     }
-    out.focus.x = fx;
-    out.focus.y = fy + 0.7;
-    out.focus.z = fz;
+    out.focus.x = p.x;
+    out.focus.y = p.y;
+    out.focus.z = p.z;
     const K = BALANCE.camera.combat;
     out.yaw = this.combatYaw;
     out.pitch = K.pitch;
-    out.distance = clamp(K.base + spread * K.perSpread, K.min, K.max) * BALANCE.camera.zoomOut;
+    out.distance = clamp(K.base + gap * K.perSpread, K.min, K.max) * BALANCE.camera.zoomOut;
     out.fov = K.fov;
     return out;
   }
@@ -1687,8 +1679,8 @@ export class Game {
     out.focus.y = v.transform.pos.y + 0.8;
     out.focus.z = (v.transform.pos.z + attacker.transform.pos.z) / 2;
     out.yaw = this.combatYaw + (this.settings.reducedMotion ? 0 : Math.sin(m.tick * 0.03) * 0.7);
-    out.pitch = 0.18;
-    out.distance = 5;
+    out.pitch = 0.62;
+    out.distance = 7.5;
     out.fov = 44;
     return true;
   }
@@ -1709,14 +1701,30 @@ export class Game {
           this.camera.setMode('CombatCamera', 16);
         }
         this.combatPose(this.desiredCam);
-        if (s === 'COMBAT_VICTORY') this.desiredCam.distance += this.fsm.stateTicks * 0.02;
+        if (s === 'COMBAT_VICTORY') {
+          const cap = BALANCE.camera.exploration.distance * BALANCE.camera.zoomOut;
+          this.desiredCam.distance = Math.min(cap, this.desiredCam.distance + this.fsm.stateTicks * 0.012);
+        }
       }
     } else {
       this.explorationPose(this.desiredCam);
     }
-    const t = this.map.tiles;
-    clampFocusToMap(this.desiredCam, t.width, t.height, this.viewAspect, BALANCE.camera.edgeMargin);
     this.camera.update(this.desiredCam, TICK_DT);
+    // Follow smoothing and the encounter blend may slide the look-at point.
+    // The chosen character is put back at the centre every tick, on every aspect.
+    this.lockCameraOnSubject();
+  }
+
+  /** Look-at point of the character the player is controlling right now. */
+  private lockCameraOnSubject(): void {
+    const s = this.fsm.state;
+    const battle = s === 'ENCOUNTER_TRANSITION' || s === 'ACTIVE_COMBAT' || s === 'COMBAT_VICTORY' || s === 'COMBAT_DEFEAT';
+    const e = (battle ? this.controlled() : undefined) ?? this.leader();
+    const p = e.transform.pos;
+    const f = this.camera.pose.focus;
+    f.x = p.x;
+    f.y = p.y;
+    f.z = p.z;
   }
 
   // ---------------------------------------------------------------- pause / UI actions

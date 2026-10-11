@@ -3,10 +3,11 @@ import { AppState, type GestureResponderEvent, Platform, StyleSheet, useWindowDi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { UiSlot, UiSnapshot } from '../../game/Game';
 import { BALANCE } from '../../game/content/balance';
-import { type BindAction, keyCaption, SLOT_ACTIONS } from '../../game/settings';
+import { type BindAction, keyCaption } from '../../game/settings';
 import { Txt } from '../components/primitives';
 import { useGameUi, useServices } from '../GameContext';
 import { COLORS } from '../theme';
+import { layoutControls, type PlacedControl } from './controlLayout';
 import { type IconName, PixelIcon, techniqueIcon } from './PixelIcon';
 
 type Kind = 'button' | 'slot' | 'limit' | 'focus';
@@ -37,67 +38,28 @@ function hasFinePointer(): boolean {
   return Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: fine)').matches;
 }
 
-/**
- * Builds the landscape control layout: joystick zone on the left, attack
- * cluster bottom-right, technique slots + limit above it, utility row at the
- * bottom centre. All coordinates are absolute (screen dp) so hit-testing is
- * pure geometry and identical on web and native.
- */
-function layout(ui: UiSnapshot, w: number, h: number, ins: { left: number; right: number; top: number; bottom: number }, scale: number, touch: boolean): Control[] {
-  const combat = ui.state === 'ACTIVE_COMBAT';
-  // Never shrink below a comfortable thumb size, never grow absurdly on tablets.
-  const b = Math.max(touch ? 50 : 42, Math.min(84, Math.min(w, h) * 0.13)) * scale;
-  const cx = w - ins.right - b * 0.95;
-  const cy = h - ins.bottom - b * 0.95;
-  const out: Control[] = [];
-  const add = (key: string, kind: Kind, action: BindAction, x: number, y: number, r: number, icon: IconName | null, color: string, slot?: UiSlot): void => {
-    out.push({ key, kind, action, x, y, r, icon, color, slot });
-  };
+const BUTTON_ICON: Record<string, { icon: IconName; color: string }> = {
+  light: { icon: 'fist', color: COLORS.gold },
+  ki: { icon: 'blast', color: COLORS.ki },
+  dash: { icon: 'dash', color: COLORS.text },
+  charge: { icon: 'aura', color: COLORS.ki },
+  heavy: { icon: 'heavy', color: COLORS.enemy },
+  guard: { icon: 'shield', color: COLORS.good },
+  up: { icon: 'up', color: COLORS.dim },
+  down: { icon: 'down', color: COLORS.dim },
+  focus: { icon: 'focus', color: '#d8d8ff' },
+  limit: { icon: 'limit', color: COLORS.gold },
+  nextAlly: { icon: 'swap', color: COLORS.player },
+  nextTarget: { icon: 'target', color: COLORS.enemy },
+  camLeft: { icon: 'camLeft', color: COLORS.dim },
+  camRight: { icon: 'camRight', color: COLORS.dim },
+  menu: { icon: 'menu', color: COLORS.text },
+};
 
-  if (touch) {
-    add('light', 'button', 'light', cx, cy, b * 0.6, 'fist', COLORS.gold);
-    add('ki', 'button', 'ki', cx - b * 0.05, cy - b * 1.3, b * 0.46, 'blast', COLORS.ki);
-    add('dash', 'button', 'dash', cx - b * 2.5, cy + b * 0.2, b * 0.42, 'dash', COLORS.text);
-    add('charge', 'button', 'charge', cx - b * 2.35, cy - b * 1.05, b * 0.42, 'aura', COLORS.ki);
-    if (combat) {
-      add('heavy', 'button', 'heavy', cx - b * 1.3, cy + b * 0.1, b * 0.48, 'heavy', COLORS.enemy);
-      add('guard', 'button', 'guard', cx - b * 1.2, cy - b * 1.15, b * 0.44, 'shield', COLORS.good);
-      add('up', 'button', 'up', ins.left + b * 0.6, cy - b * 3.1, b * 0.36, 'up', COLORS.dim);
-      add('down', 'button', 'down', ins.left + b * 0.6, cy - b * 2.2, b * 0.36, 'down', COLORS.dim);
-    } else {
-      add('up', 'button', 'up', cx - b * 1.3, cy + b * 0.1, b * 0.44, 'up', COLORS.dim);
-    }
-  }
-
-  // Technique row: 4 slots + limit (combat) and focus.
-  const sy = touch ? cy - b * 2.45 : cy;
-  const sr = b * (touch ? 0.42 : 0.5);
-  const step = sr * 2.35;
-  const limitX = cx;
-  if (combat && ui.limit) add('limit', 'limit', 'special', limitX, sy, sr * 1.1, 'limit', COLORS.gold);
-  ui.slots.forEach((s, i) => {
-    add(`slot${i}`, 'slot', SLOT_ACTIONS[i], limitX - step * (4 - i) - (combat ? sr * 0.3 : -step * 0.6), sy, sr, techniqueIcon(s.moveId), COLORS.ki, s);
-  });
-  if (combat) add('focus', 'focus', 'focus', touch ? cx - b * 3.45 : limitX - step * 5 - sr * 0.8, touch ? cy - b * 1.15 : sy, sr, 'focus', '#d8d8ff');
-
-  if (touch) {
-    const ry = h - ins.bottom - b * 0.42;
-    const util: [string, BindAction, IconName, string][] = [
-      ['nextAlly', 'nextAlly', 'swap', COLORS.player],
-      ...(combat
-        ? ([
-            ['nextTarget', 'nextTarget', 'target', COLORS.enemy],
-            ['camLeft', 'camLeft', 'camLeft', COLORS.dim],
-            ['camRight', 'camRight', 'camRight', COLORS.dim],
-          ] as [string, BindAction, IconName, string][])
-        : []),
-      ['menu', 'menu', 'menu', COLORS.text],
-    ];
-    const ur = b * 0.32;
-    const total = util.length * ur * 2.4;
-    util.forEach(([key, action, icon, color], i) => add(key, 'button', action, w / 2 - total / 2 + ur * 1.2 + i * ur * 2.4, ry, ur, icon, color));
-  }
-  return out;
+function decorate(p: PlacedControl, ui: UiSnapshot): Control {
+  const slot = p.slotIndex !== undefined ? ui.slots[p.slotIndex] : undefined;
+  const face = p.kind === 'slot' ? { icon: techniqueIcon(slot?.moveId ?? null), color: COLORS.ki } : BUTTON_ICON[p.key];
+  return { key: p.key, kind: p.kind, action: p.action, x: p.x, y: p.y, r: p.r, icon: face?.icon ?? null, color: face?.color ?? COLORS.text, slot };
 }
 
 const ControlFace = memo(function ControlFace({
@@ -221,12 +183,24 @@ function ControlsLayer({ touch, ui }: { touch: boolean; ui: UiSnapshot }) {
   const scale = game.settings.buttonScale;
   const fine = useMemo(() => hasFinePointer(), []);
 
-  const controls = useMemo(
-    () => layout(ui, w, h, { left: insets.left + 8, right: insets.right + 8, top: insets.top + 6, bottom: insets.bottom + 6 }, scale, touch),
-    [ui, w, h, insets.left, insets.right, insets.top, insets.bottom, scale, touch],
+  const combatUi = ui.state === 'ACTIVE_COMBAT' || ui.state === 'ENCOUNTER_TRANSITION';
+  const placed = useMemo(
+    () =>
+      layoutControls({
+        combat: combatUi,
+        slotCount: ui.slots.length,
+        hasLimit: combatUi && !!ui.limit,
+        w,
+        h,
+        insets: { left: insets.left, right: insets.right, top: insets.top, bottom: insets.bottom },
+        scale,
+        touch,
+      }),
+    [combatUi, ui.slots.length, ui.limit, w, h, insets.left, insets.right, insets.top, insets.bottom, scale, touch],
   );
-  const stickR = Math.max(50, Math.min(84, Math.min(w, h) * 0.13)) * scale * 1.1;
-  const stickHome = { x: insets.left + 8 + stickR * 1.25, y: h - insets.bottom - 6 - stickR * 1.25 };
+  const controls = useMemo(() => placed.controls.map((p) => decorate(p, ui)), [placed, ui]);
+  const stickR = placed.stick?.r ?? 48;
+  const stickHome = placed.stick ?? { x: insets.left + stickR, y: h - insets.bottom - stickR, r: stickR };
 
   const controlsRef = useRef(controls);
   const dialogueRef = useRef(!!ui.dialogue);

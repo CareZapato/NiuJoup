@@ -651,8 +651,24 @@ export class GameRenderer {
     const rig = g.camera;
     rig.resolve((x, z) => g.map.tiles.visualHeightAt(x, z));
     this.applyFocusLook(g.focusFilter, realDt);
-    this.camera.position.set(rig.position.x, rig.position.y, rig.position.z);
-    this.camera.lookAt(rig.lookAt.x, rig.lookAt.y, rig.lookAt.z);
+    // Sprites render between ticks. Shift the whole camera by the same fraction
+    // so the chosen character stays in the centre of the screen while moving.
+    const mode = g.fsm.state === 'PAUSED' ? g.fsm.previous : g.fsm.state;
+    const followBattle = BATTLE_STATES.has(mode);
+    const followWalk = mode === 'WORLD_EXPLORATION' || mode === 'RETURN_TO_WORLD';
+    let ox = 0;
+    let oy = 0;
+    let oz = 0;
+    if (followBattle || followWalk) {
+      const subject = followBattle ? (g.controlled() ?? g.leader()) : g.leader();
+      const t = subject.transform;
+      const k = alpha - 1;
+      ox = k * (t.pos.x - t.prev.x);
+      oy = k * (t.pos.y - t.prev.y);
+      oz = k * (t.pos.z - t.prev.z);
+    }
+    this.camera.position.set(rig.position.x + ox, rig.position.y + oy, rig.position.z + oz);
+    this.camera.lookAt(rig.lookAt.x + ox, rig.lookAt.y + oy, rig.lookAt.z + oz);
     if (Math.abs(this.camera.fov - rig.pose.fov) > 0.01) {
       this.camera.fov = rig.pose.fov;
       this.camera.updateProjectionMatrix();
