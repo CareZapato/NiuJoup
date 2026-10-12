@@ -1,6 +1,6 @@
 # Progreso de desarrollo
 
-Última actualización: 11-10-2026. Estado: **Fase 0 completada · Fase 1 (vertical slice) completada y verificada en web.** Buena parte de las fases 2 y 3 ya está implementada y cubierta por tests unitarios, pero falta jugarla de principio a fin en el navegador (ver más abajo).
+Última actualización: 11-10-2026. Estado: **Fase 0 completada · Fase 1 (vertical slice) completada y verificada en web.** Goku ya usa sprites pintados. Krillin y Yamcha siguen procedurales.
 
 ## Fase 0: viabilidad técnica
 
@@ -185,7 +185,7 @@ Está implementado con comportamiento real y cubierto por tests unitarios o de f
 
 ## Pendiente
 
-- **Cargador de PNG hechos a mano en tiempo de ejecución**: la pipeline los valida, pero el juego aún usa solo arte procedural (ver ASSET_PIPELINE.md).
+- **Sprites pintados de Yamcha**. Goku y Krillin cargan `char_kaien_hero.png` y `char_oren_hero.png`. El recorte usa el alfa real y, en cada celda, se queda con el personaje y descarta el trozo del frame vecino. En el atlas de Goku el único frame con píxeles sueltos es el teletransporte a medias, que es el efecto de disolución. Krillin no tiene restos sueltos. Falta reiniciar Metro y mirarlo en partida. Las técnicas que Krillin no tiene dibujadas (Kaioken, Sokidan, Colmillo de Lobo, ráfaga, teletransporte) repiten otra pose.
 - **Audio**: no implementado. Las animaciones ya emiten eventos (`footstep`, `impact`, `release`) a los que conectarlo.
 - **QA en dispositivos** Android e iOS reales (expo-gl, rendimiento, táctil, segundo plano).
 - Smoke tests de navegador para los flujos de las fases 2 y 3 enumerados arriba.
@@ -199,6 +199,8 @@ Está implementado con comportamiento real y cubierto por tests unitarios o de f
 - **CDP `Input.dispatchTouchEvent`**: para levantar un solo dedo hay que enviar `touchEnd` con **solo** ese punto. Un `touchMove` sin él no lo suelta, y un `touchEnd` con los dedos restantes suelta precisamente esos.
 - **La fila de botones táctiles tapaba el botón de salto** en pantallas bajas: se movió al centro inferior.
 - **Los aliados terminaban los combates solos** antes de que el jugador participase: se subió la vida de los enemigos y se añadió la regla de "dejar espacio al líder" a la Utility AI.
+- **El pelo negro de Goku se veía transparente**: el recorte trataba el negro opaco como color de transparencia. Las hojas ya traen alfa real (fondo con alfa 0, pelo con alfa ~252). El atlas ahora copia ese alfa y deja el interior opaco.
+- **Trozos de otro frame en el vuelo de Goku**: la rejilla de las poses quietas cortaba a los personajes horizontales y metía un puño o una bota del vecino. Cada fila se corta ahora por sus propios huecos, y se descarta el componente que toca el borde de la celda si es más pequeño que el personaje.
 - **Los sprites procedurales invadían la celda vecina**: 529 avisos del validador. Se corrigió el generador limitando manos y aura al interior de la celda.
 - **Texto con acentos corrupto (mojibake)** por reescribir ficheros con PowerShell 5: se reparó con un script de Node. Regla para el proyecto: no reescribir ficheros de texto con `Get-Content`/`Set-Content` de PowerShell 5.
 - **`StyleSheet.absoluteFillObject` no existe en RN 0.86**: se usa `StyleSheet.absoluteFill`.
@@ -224,5 +226,5 @@ Están detalladas en ARCHITECTURE.md:
 
 1. Smoke tests de navegador para el 3 contra 3, el cambio de personaje, el Meteo Attack y el gólem.
 2. Ajuste de balance a partir de esas partidas.
-3. Cargador de PNG en tiempo de ejecución.
+3. Hojas pintadas de Yamcha, con el mismo recorte que Goku y Krillin.
 4. Primera prueba en un dispositivo Android con Expo Go, para cerrar el criterio 17.

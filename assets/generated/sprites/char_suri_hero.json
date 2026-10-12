@@ -209,6 +209,14 @@
       "events": {
         "1": "release"
       }
+    },
+    "tech_teleport": {
+      "frames": 3,
+      "fps": 8,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
     }
   },
   "columns": {
@@ -242,9 +250,10 @@
     "tech_sokidan": 59,
     "tech_wolf_fang": 62,
     "tech_kaioken": 65,
-    "tech_barrage": 67
+    "tech_barrage": 67,
+    "tech_teleport": 70
   },
-  "totalColumns": 70,
+  "totalColumns": 73,
   "gridColumns": 32,
   "hurtbox": {
     "width": 25.6,

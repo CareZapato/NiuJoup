@@ -73,6 +73,7 @@ export const HERO_ANIMS: Partial<Record<AnimId, AnimDef>> = {
   tech_wolf_fang: { frames: 3, fps: 8, loop: false, events: { 1: 'release' } },
   tech_kaioken: { frames: 2, fps: 8, loop: true, events: { 1: 'release' } },
   tech_barrage: { frames: 3, fps: 10, loop: false, events: { 1: 'release' } },
+  tech_teleport: { frames: 3, fps: 8, loop: false, events: { 1: 'release' } },
 };
 
 /** Frames per animation; technique frames are prep / release / recovery. */
@@ -166,6 +167,11 @@ const POSES: Record<keyof typeof HERO_ANIMS, HeroPose[]> = {
     p({ ...STANCE, lean: -1, armF: [-3, 6], armB: [-4, 6], fist: false }),
     p({ ...STANCE, lean: 2, armF: [11.5, 1], armB: [-3, 6], fist: false, fx: 'ball', fxPower: 0.7 }),
     p({ ...STANCE, lean: 2, armF: [-3, 6], armB: [11, 2], fist: false, fx: 'ball', fxPower: 0.7 }),
+  ],
+  tech_teleport: [
+    p({ armF: [1.5, -9], armB: [-2, 8], headDy: -0.3, eyes: 'fierce' }),
+    p({ bob: -0.4, armF: [2, -6], armB: [-2, 6], eyes: 'closed' }),
+    p(STANCE),
   ],
 };
 

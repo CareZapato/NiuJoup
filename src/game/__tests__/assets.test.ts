@@ -63,7 +63,7 @@ describe('hero atlases (Goku, Krillin, Yamcha)', () => {
       expect(a.width).toBeLessThanOrEqual(2048);
       expect(a.manifest.frameHeight).toBe(96);
       expect(a.manifest.views.length).toBeGreaterThanOrEqual(5);
-      for (const anim of ['tech_kamehameha', 'tech_kienzan', 'tech_taiyoken', 'tech_sokidan', 'tech_wolf_fang', 'tech_kaioken'] as const) {
+      for (const anim of ['tech_kamehameha', 'tech_kienzan', 'tech_taiyoken', 'tech_sokidan', 'tech_wolf_fang', 'tech_kaioken', 'tech_teleport'] as const) {
         expect(a.manifest.anims[anim]?.events?.[1]).toBe('release');
       }
     });

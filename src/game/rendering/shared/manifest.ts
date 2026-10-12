@@ -106,6 +106,7 @@ export const ANIM_FALLBACK: Partial<Record<AnimId, AnimId>> = {
   tech_wolf_fang: 'punch',
   tech_kaioken: 'charge',
   tech_barrage: 'kiblast',
+  tech_teleport: 'dash',
 };
 
 /** Frame index for an animation at a given tick count (60 ticks/s). */

@@ -51,7 +51,8 @@ export type AnimId =
   | 'tech_sokidan'
   | 'tech_wolf_fang'
   | 'tech_kaioken'
-  | 'tech_barrage';
+  | 'tech_barrage'
+  | 'tech_teleport';
 
 export interface SpriteComp {
   atlas: string;

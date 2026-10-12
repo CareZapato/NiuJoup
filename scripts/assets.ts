@@ -2,9 +2,11 @@
 //   npx tsx scripts/assets.ts export            -> assets/generated/** (PNG + manifest JSON)
 //   npx tsx scripts/assets.ts validate [dirs..] -> validates every <name>.png + <name>.json pair
 // Default validation dirs: assets/sprites (hand-made art) and assets/generated/sprites.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { PNG } from 'pngjs';
+import { buildGokuAtlas } from './build-goku-atlas';
+import { buildKrillinAtlas } from './build-krillin-atlas';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES } from '../src/game/content/characters';
 import type { AppearanceDef } from '../src/game/content/types';
 import { type AssetIssue, toTopDown, validateAtlas } from '../src/game/rendering/shared/assetValidation';
@@ -30,8 +32,24 @@ function exportAll(): void {
     ...Object.entries(NPC_APPEARANCES).map(([id, a]): [string, string, AppearanceDef] => ['npc', id, a]),
   ];
   const index: { sprites: string[]; world: string[] } = { sprites: [], world: [] };
-  for (const f of readdirSync(join(OUT, 'sprites'))) rmSync(join(OUT, 'sprites', f));
+  for (const f of readdirSync(join(OUT, 'sprites'))) {
+    const path = join(OUT, 'sprites', f);
+    if (statSync(path).isDirectory()) continue;
+    rmSync(path);
+  }
   for (const [kind, id, app] of sources) {
+    if (isHeroAppearance(app) && (app.hero === 'goku' || app.hero === 'krillin')) {
+      const painted = app.hero === 'goku' ? buildGokuAtlas() : buildKrillinAtlas();
+      if (painted) {
+        const name = `${kind}_${id}_hero`;
+        const png = new PNG({ width: painted.width, height: painted.height });
+        png.data = Buffer.from(painted.rgba);
+        writeFileSync(join(OUT, 'sprites', `${name}.png`), PNG.sync.write(png));
+        writeFileSync(join(OUT, 'sprites', `${name}.json`), JSON.stringify(painted.manifest, null, 2));
+        index.sprites.push(name);
+        continue;
+      }
+    }
     if (isHeroAppearance(app)) {
       const a = generateHeroAtlas(`${kind}:${id}`, app);
       const name = `${kind}_${id}_hero`;

@@ -603,7 +603,7 @@ export class GameRenderer {
     const u1 = (r.x + m.frameWidth) / r.atlasW;
     const v1 = 1 - r.y / r.atlasH;
     const v0 = 1 - (r.y + m.frameHeight) / r.atlasH;
-    const key = `${atlas.manifest.id}:${col}:${view.row}:${view.mirror}`;
+    const key = `${atlas.manifest.id}@${this.atlases.epoch}:${col}:${view.row}:${view.mirror}`;
     if (v.atlasKey !== key) {
       v.atlasKey = key;
       if (v.mat.map !== atlas.texture) {

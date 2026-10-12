@@ -9,7 +9,7 @@ export const POSE_ANIM: Record<TechniquePose, AnimId> = {
   sokidan: 'tech_sokidan',
   wolf_fang: 'tech_wolf_fang',
   kaioken: 'tech_kaioken',
-  teleport: 'dash',
+  teleport: 'tech_teleport',
   barrage: 'tech_barrage',
   scatter: 'tech_barrage',
 };
@@ -81,6 +81,12 @@ export function techniquePhase(c: NonNullable<Entity['combatant']>): number | nu
   const m = MOVES[c.moveId];
   if (!m?.technique) return null;
   const t = c.moveTick;
+  // The teleport's active window is a single tick. Hold the vanish frame long enough to read.
+  if (m.technique.effect === 'teleport') {
+    if (t < m.startup) return 0;
+    if (t < m.startup + 8) return 1;
+    return 2;
+  }
   if (t < m.startup) return 0;
   if (t < m.startup + m.active) {
     const multi = m.technique.effect === 'rush' || m.technique.effect === 'barrage' || m.technique.effect === 'scatter';

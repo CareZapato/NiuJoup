@@ -6,19 +6,16 @@ Todo el arte actual es **original y procedural**. Se genera en código (`src/gam
 
 Los tres personajes jugables usan un generador específico y más detallado (`rendering/shared/heroArt.ts`). Las otras entidades siguen con `characterArt.ts`.
 
-- **Un solo atlas para exploración y combate**: frames de 64×96 px, 5 vistas (8 direcciones con espejo) y 31 animaciones (70 columnas). Se envuelve en bloques de 2048 px de ancho (`gridColumns`, `frameRect`), que es el límite seguro de textura en móviles.
-- **Animaciones**: idle, idle_wait, walk, run, jump, fall, interact, pickup, hit, knockback, defeat, victory, stance, dash, dodge, hover, fly, guard, charge, punch, kick, kiblast, special y confused. A ellas se suman las poses de técnica `tech_kamehameha`, `tech_kienzan`, `tech_taiyoken`, `tech_sokidan`, `tech_wolf_fang`, `tech_kaioken` y `tech_barrage`.
+- **Un solo atlas para exploración y combate**: frames de 64×96 px, 5 vistas (8 direcciones con espejo) y 32 animaciones (73 columnas). Se envuelve en bloques de 2048 px de ancho (`gridColumns`, `frameRect`), que es el límite seguro de textura en móviles.
+- **Animaciones**: idle, idle_wait, walk, run, jump, fall, interact, pickup, hit, knockback, defeat, victory, stance, dash, dodge, hover, fly, guard, charge, punch, kick, kiblast, special y confused. A ellas se suman las poses de técnica `tech_kamehameha`, `tech_kienzan`, `tech_taiyoken`, `tech_sokidan`, `tech_wolf_fang`, `tech_kaioken`, `tech_barrage` y `tech_teleport`.
 - **Poses de técnica**: tres frames (preparación, liberación y recuperación) con el evento `release` en el frame 1. En juego, `AnimationSystem.techniquePhase` elige el frame a partir del frame data de la técnica: la liberación coincide con el tick en que sale el proyectil, el rayo o el impacto. Los proyectiles nacen en la simulación, no en la animación.
 - **Rasgos distintivos**: pelo en punta de Goku, Krillin calvo con seis puntos en la frente y más bajo (piernas ×0,8), pelo largo de Yamcha con cicatrices. Los tres llevan gi naranja con camiseta, muñequeras y botas azules, y el símbolo de la escuela en el pecho y, más grande, en la espalda.
-- **Filtrado**: magnificación nearest (píxel nítido) y minificación lineal para el héroe, para evitar el parpadeo al dibujarse más pequeño que su resolución.
+- **Filtrado**: magnificación nearest. Los atlas pintados de Goku y Krillin también usan minificación nearest. Yamcha, todavía procedural, sigue con minificación lineal para no parpadear al dibujarse más pequeño.
 - **Nombres**: `char_<id>_hero`. El validador exige 64×96, las animaciones de `HERO_ANIMS` y el evento `release` en todas las técnicas, y avisa si el ancho supera 2048 px.
 
-> **Honestidad sobre el arte**: estos sprites son **placeholders procedurales** dibujados por código. **No son arte final** ni una reproducción de las imágenes de referencia: esas imágenes no estaban disponibles en el disco durante la implementación. Están hechos a partir de las paletas y rasgos descritos en `content/characters.ts`. Para el arte final hay que dibujar PNG siguiendo la plantilla de `assets/generated/sprites/char_<id>_hero.png` y su manifiesto, y añadir el cargador de PNG en tiempo de ejecución (ver la última sección).
+> **Honestidad sobre el arte**: Yamcha sigue siendo un placeholder procedural. Goku y Krillin usan las hojas pintadas de `assets/generated/sprites/Nuevos/Goku/` (`scripts/build-goku-atlas.ts` y `scripts/build-krillin-atlas.ts`), empaquetadas en `char_kaien_hero.png` y `char_oren_hero.png`. El fondo de esas hojas es alfa real, no un color clave. El juego las carga con `expo-asset` y, hasta que llegan, muestra el procedural. `npm run assets:export` no borra la carpeta `Nuevos`. Krillin no tiene hojas de Kaioken, Sokidan, Colmillo de Lobo, ráfaga ni teletransporte: esas celdas repiten la pose más cercana para que el atlas compartido siga siendo válido.
 
-Estado del validador: 15 atlas, 0 errores, 34 avisos. Los avisos son de los héroes:
-
-- los pies despegados en los frames de carrera, que son un rebote intencionado;
-- 6 frames de perfil, como el Kamehameha extendido, que tocan el borde lateral de la celda.
+Estado del validador: 15 atlas, 0 errores, 11 avisos. Goku y Krillin salen limpios. Los avisos que quedan son de Yamcha, todavía procedural: pies despegados en la carrera (rebote) y 6 frames de perfil que tocan el borde.
 
 ## Modelo de resolución
 
@@ -110,4 +107,4 @@ Estado de los atlas antiguos (`world`/`battle`): 0 errores y 0 avisos. En la pri
 2. Guarda `assets/sprites/<nombre>.png` y su `<nombre>.json` (puedes copiar el JSON generado y ajustar `anims` si añades frames; `columns` y `totalColumns` deben ser coherentes).
 3. Ejecuta `npm run assets:validate`.
 
-**Limitación actual (pendiente para la Fase 2):** el juego **todavía no carga PNG externos en tiempo de ejecución**. Siempre usa los atlas procedurales generados en memoria. La pipeline (formato, nombres, exportación y validación) está lista y probada, pero falta el cargador: decodificar el PNG empaquetado con `expo-asset` a `DataTexture` en nativo y a `Texture` en web, registrándolo en el `AtlasCache` con prioridad sobre el procedural. Como el renderer solo depende del manifiesto, ese cambio no afectará a la lógica del juego.
+Goku y Krillin cargan su PNG en tiempo de ejecución (`AtlasCache`, textura nearest, `flipY` activo). Yamcha sigue generándose en memoria hasta que existan sus hojas.
