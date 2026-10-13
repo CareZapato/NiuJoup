@@ -13,6 +13,8 @@ export const GRADE_UNIFORMS = {
 };
 
 const lightData = new Uint8Array(LIGHT_SLOTS * 4);
+const lightScratch = new Uint8Array(LIGHT_SLOTS * 4);
+let packedCount = -1;
 const lightTexture = new THREE.DataTexture(lightData, LIGHT_SLOTS, 1, THREE.RGBAFormat);
 lightTexture.magFilter = THREE.NearestFilter;
 lightTexture.minFilter = THREE.NearestFilter;
@@ -31,18 +33,30 @@ export interface WorldLight {
   radius: number;
 }
 
-/** Uploads light volumes. x/z in 0.5 m steps, height in 0.05 m, radius in 0.125 m. */
+/** Uploads light volumes. x/z in 0.5 m steps, height in 0.05 m, radius in 0.125 m. Skips the upload when nothing moved, so the grade does not flicker. */
 export function uploadWorldLights(lights: readonly WorldLight[]): void {
-  lightData.fill(0);
+  lightScratch.fill(0);
   const n = Math.min(LIGHT_SLOTS, lights.length);
   for (let i = 0; i < n; i++) {
     const L = lights[i]!;
     const o = i * 4;
-    lightData[o] = Math.min(255, Math.max(0, Math.round(L.x * 2)));
-    lightData[o + 1] = Math.min(255, Math.max(0, Math.round(L.y * 20)));
-    lightData[o + 2] = Math.min(255, Math.max(0, Math.round(L.z * 2)));
-    lightData[o + 3] = Math.min(255, Math.max(0, Math.round(L.radius * 8)));
+    lightScratch[o] = Math.min(255, Math.max(0, Math.round(L.x * 2)));
+    lightScratch[o + 1] = Math.min(255, Math.max(0, Math.round(L.y * 20)));
+    lightScratch[o + 2] = Math.min(255, Math.max(0, Math.round(L.z * 2)));
+    lightScratch[o + 3] = Math.min(255, Math.max(0, Math.round(L.radius * 8)));
   }
+  if (n === packedCount) {
+    let same = true;
+    for (let i = 0; i < n * 4; i++) {
+      if (lightScratch[i] !== lightData[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return;
+  }
+  lightData.set(lightScratch);
+  packedCount = n;
   GRADE_UNIFORMS.uLightCount.value = n;
   lightTexture.needsUpdate = true;
 }
@@ -60,7 +74,7 @@ export function patchWorld<T extends THREE.Material>(m: T): T {
     s.uniforms.uLightMap = GRADE_UNIFORMS.uLightMap;
     s.uniforms.uLightCount = GRADE_UNIFORMS.uLightCount;
     s.vertexShader = s.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
+      .replace('#include <common>', '#include <common>\nvarying highp vec3 vWorldPos;')
       .replace(
         '#include <project_vertex>',
         `#include <project_vertex>
@@ -77,7 +91,7 @@ uniform vec3 uAmbient;
 uniform float uSepia;
 uniform sampler2D uLightMap;
 uniform float uLightCount;
-varying vec3 vWorldPos;
+varying highp vec3 vWorldPos;
 ` +
       s.fragmentShader.replace(
         '#include <dithering_fragment>',
@@ -93,9 +107,9 @@ varying vec3 vWorldPos;
     vec4 raw = texture2D(uLightMap, vec2((float(i) + 0.5) / ${LIGHT_SLOTS}.0, 0.5));
     vec3 lp = vec3(raw.r * (255.0 / 2.0), raw.g * (255.0 / 20.0), raw.b * (255.0 / 2.0));
     float radius = raw.a * (255.0 / 8.0);
-    vec3 d = vWorldPos - lp;
+    highp vec3 d = vWorldPos - lp;
     d.y *= 0.38;
-    float dist = length(d);
+    highp float dist = length(d);
     float t = clamp(1.0 - smoothstep(radius * 0.05, radius, dist), 0.0, 1.0);
     lamp += t * t * live * step(0.2, radius);
   }
@@ -106,6 +120,6 @@ varying vec3 vWorldPos;
 }`,
       );
   };
-  m.customProgramCacheKey = () => 'world-grade-lights';
+  m.customProgramCacheKey = () => 'world-grade-lights-hp';
   return m;
 }

@@ -132,13 +132,13 @@ export const BALANCE = {
     lampRadius: 4.5,
   },
   wind: {
-    turnPerTick: 0.0004,
-    gustSpeed: 0.018,
-    flutterSpeed: 0.01,
-    minStrength: 0.28,
-    maxStrength: 0.85,
+    turnPerTick: 0.00012,
+    /** One gust cycle is about 17 s at 60 Hz. A second ripple made the crowns shiver. */
+    gustSpeed: 0.006,
+    minStrength: 0.4,
+    maxStrength: 0.72,
     /** Rigid tilt in radians when the wind blows fully across the view. */
-    treeLean: 0.08,
+    treeLean: 0.045,
   },
   exploration: {
     walkSpeed: 4.2,

@@ -72,10 +72,75 @@ export class PartyTrail {
   }
 }
 
-export function followTrail(e: Entity, map: TileMap, trail: PartyTrail, slot: number, leaderRunning: boolean): void {
+interface Wander {
+  /** 0 stand at the slot, 1 walk out, 2 stand there, 3 walk back. */
+  phase: 0 | 1 | 2 | 3;
+  pause: number;
+  tx: number;
+  tz: number;
+  n: number;
+}
+
+const wanders = new Map<number, Wander>();
+
+export function resetCompanionWander(): void {
+  wanders.clear();
+}
+
+function wanderSpot(id: number, n: number, homeX: number, homeZ: number, map: TileMap, y: number, radius: number): { x: number; z: number } | null {
+  for (let k = 0; k < 8; k++) {
+    const h = Math.imul((id + 17) ^ Math.imul(n + k + 1, 0x9e3779b9), 0x85ebca6b) >>> 0;
+    const ang = (h % 1000) / 159.15;
+    const dist = 0.85 + ((h >>> 10) % 65) / 100;
+    const x = homeX + Math.cos(ang) * dist;
+    const z = homeZ + Math.sin(ang) * dist;
+    if (map.canOccupy(x, z, y, radius, X.stepUp, false)) return { x, z };
+  }
+  return null;
+}
+
+function stroll(e: Entity, map: TileMap, homeX: number, homeZ: number): void {
+  const p = e.transform.pos;
+  const dHome = Math.hypot(homeX - p.x, homeZ - p.z);
+  let w = wanders.get(e.id);
+  if (!w) {
+    w = { phase: dHome > 0.35 ? 3 : 0, pause: 60 * (10 + (e.id % 6)), tx: homeX, tz: homeZ, n: e.id };
+    wanders.set(e.id, w);
+  }
+  if (w.phase === 0 || w.phase === 2) {
+    w.pause--;
+    moveGroundBody(e, map, 0, 0, 0);
+    if (w.pause > 0) return;
+    if (w.phase === 0) {
+      const spot = wanderSpot(e.id, w.n++, homeX, homeZ, map, p.y, e.body!.radius);
+      if (!spot) w.pause = 120;
+      else {
+        w.tx = spot.x;
+        w.tz = spot.z;
+        w.phase = 1;
+      }
+    } else w.phase = 3;
+    return;
+  }
+  const gx = w.phase === 3 ? homeX : w.tx;
+  const gz = w.phase === 3 ? homeZ : w.tz;
+  const dx = gx - p.x;
+  const dz = gz - p.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.22) {
+    w.phase = w.phase === 1 ? 2 : 0;
+    w.pause = w.phase === 2 ? 60 * (8 + (e.id % 4)) : 60 * (12 + ((e.id + w.n) % 6));
+    moveGroundBody(e, map, 0, 0, 0);
+    return;
+  }
+  moveGroundBody(e, map, dx / dist, dz / dist, Math.min(X.walkSpeed * 0.5, dist * 4));
+}
+
+export function followTrail(e: Entity, map: TileMap, trail: PartyTrail, slot: number, leaderRunning: boolean, leaderSettled = false): void {
   const target = trail.sample(X.companionFollowGap * (slot + 1));
   const p = e.transform.pos;
   if (!target) {
+    wanders.delete(e.id);
     moveGroundBody(e, map, 0, 0, 0);
     return;
   }
@@ -83,6 +148,7 @@ export function followTrail(e: Entity, map: TileMap, trail: PartyTrail, slot: nu
   const dz = target.z - p.z;
   const d = Math.hypot(dx, dz);
   if (d > 12) {
+    wanders.delete(e.id);
     // Lost (e.g. after teleport): snap to trail.
     p.x = target.x;
     p.z = target.z;
@@ -91,6 +157,11 @@ export function followTrail(e: Entity, map: TileMap, trail: PartyTrail, slot: nu
     e.transform.prev.z = p.z;
     return;
   }
+  if (leaderSettled) {
+    stroll(e, map, target.x, target.z);
+    return;
+  }
+  wanders.delete(e.id);
   if (d < 0.25) {
     moveGroundBody(e, map, 0, 0, 0);
     return;

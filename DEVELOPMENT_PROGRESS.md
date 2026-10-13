@@ -220,6 +220,12 @@ Están detalladas en ARCHITECTURE.md:
 - localStorage en web y SQLite en nativo;
 - escritura verificada con backup antes de mostrar "Guardado".
 
+## Diálogo con retratos
+
+La conversación se abre en una barra abajo. Quien empieza (el NPC) queda a la izquierda, mirando hacia el texto. El líder que escucha queda a la derecha y su cara se espeja para mirar al otro. El que habla lleva marco dorado; el que escucha se atenúa, en expresión neutra. Las frases de Hoku, Mira y Bram ya tienen expresión. Las caras salen de `assets/generated/sprites/Nuevos/Entorno/rostros.png` (4 columnas por 6 filas: Goku, Krillin, Yamcha, Hoku, Mira y Bram; neutra, sonrisa, seria y sorpresa). El fondo negro del borde quedó transparente y el pelo negro se conservó. Hay que reiniciar Metro para que cargue el PNG nuevo.
+
+Verificado en esta pasada: `npx tsc --noEmit` sin errores. No se abrió el navegador.
+
 ## Próximo objetivo
 
 **Fase 2 (consolidación del combate)**:

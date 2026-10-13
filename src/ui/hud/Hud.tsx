@@ -1,9 +1,11 @@
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { UiSnapshot } from '../../game/Game';
 import { Bar, Panel, Txt } from '../components/primitives';
 import { useGameUi, useServices } from '../GameContext';
 import { COLORS, hex } from '../theme';
 import { FocusOverlay, StatusChips } from './FocusOverlay';
+import { Portrait } from './Portrait';
 import { TechniqueBanner } from './TechniqueBanner';
 
 function MoneyLine({ ui }: { ui: UiSnapshot }) {
@@ -231,19 +233,36 @@ function Toasts({ ui }: { ui: UiSnapshot }) {
   );
 }
 
-function DialogueBox({ ui }: { ui: UiSnapshot }) {
-  const { game } = useServices();
-  if (!ui.dialogue) return null;
+function FaceSlot({ slot, flip }: { slot: NonNullable<UiSnapshot['dialogue']>['left']; flip: boolean }) {
   return (
-    <View style={styles.dialogue} onTouchEnd={() => game.input.tap('light')}>
-      <Panel style={{ borderColor: COLORS.border }}>
-        <Txt size={18} color={COLORS.gold}>
-          {ui.dialogue.speaker}
-        </Txt>
-        <Txt size={22}>{ui.dialogue.line}</Txt>
-        <Txt size={15} color={COLORS.dim}>
-          [J] {ui.dialogue.index + 1}/{ui.dialogue.total}
-        </Txt>
+    <View style={[styles.face, { opacity: slot.speaking ? 1 : 0.42, borderColor: slot.speaking ? COLORS.gold : COLORS.borderDim }]}>
+      <Portrait id={slot.portrait} expression={slot.expression} flip={flip} size={80} />
+      <Txt size={14} numberOfLines={1} color={slot.speaking ? COLORS.gold : COLORS.dim}>
+        {slot.name}
+      </Txt>
+    </View>
+  );
+}
+
+function DialogueBox({ ui }: { ui: UiSnapshot }) {
+  const { game, touchUi } = useServices();
+  const insets = useSafeAreaInsets();
+  const d = ui.dialogue;
+  if (!d) return null;
+  return (
+    <View style={[styles.dialogue, { bottom: insets.bottom + (touchUi ? 118 : 16) }]} onTouchEnd={() => game.input.tap('light')}>
+      <Panel style={styles.dialoguePanel}>
+        <FaceSlot slot={d.left} flip={false} />
+        <View style={styles.dialogueText}>
+          <Txt size={18} color={COLORS.gold}>
+            {d.speaker}
+          </Txt>
+          <Txt size={22}>{d.line}</Txt>
+          <Txt size={15} color={COLORS.dim}>
+            [J] {d.index + 1}/{d.total}
+          </Txt>
+        </View>
+        <FaceSlot slot={d.right} flip />
       </Panel>
     </View>
   );
@@ -332,7 +351,10 @@ const styles = StyleSheet.create({
   moves: { position: 'absolute', left: 8, bottom: 8, maxWidth: 420, padding: 6 },
   toasts: { position: 'absolute', top: 92, left: 0, right: 0, alignItems: 'center', gap: 2 },
   toast: { backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 10, paddingVertical: 1 },
-  dialogue: { position: 'absolute', left: '15%', right: '15%', bottom: 24 },
+  dialogue: { position: 'absolute', left: 8, right: 8 },
+  dialoguePanel: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, paddingHorizontal: 8 },
+  dialogueText: { flex: 1, gap: 2 },
+  face: { width: 92, alignItems: 'center', borderWidth: 2, backgroundColor: '#1a1428', paddingTop: 2 },
   rewards: { position: 'absolute', top: '30%', left: 0, right: 0, alignItems: 'center' },
   save: { position: 'absolute', right: 10, bottom: 6 },
   saveTouch: { position: 'absolute', left: 0, right: 0, top: 2, alignItems: 'center' },

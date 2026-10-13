@@ -1,6 +1,7 @@
 import { type AiBrain, type Combatant, clearIntent, emptyIntent, type Entity } from './components';
 import { BALANCE, xpToNextLevel } from './content/balance';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES, STARTING_PARTY } from './content/characters';
+import { portraitOf, type PortraitId, type TalkExpression } from './content/dialogue';
 import { ITEMS, QUESTS } from './content/items';
 import { buildValley, type MapDef } from './content/maps/valley';
 import { getMove, MOVES, NAME_STATUS_LABEL, sequencesOf } from './content/moves';
@@ -28,7 +29,7 @@ import { createProjectile, ProjectileSystem } from './systems/combat/ProjectileS
 import { limitReady, rageFromDominance } from './systems/combat/rage';
 import { clipLine, cycleTarget, isAlive, isWorldHostile } from './systems/combat/targeting';
 import { type FocusCandidate, FocusController, type FocusOutcome } from './systems/focus/FocusController';
-import { followTrail, moveGroundBody, PartyTrail, tryJump } from './systems/movement/ExplorationMovement';
+import { followTrail, moveGroundBody, PartyTrail, resetCompanionWander, tryJump } from './systems/movement/ExplorationMovement';
 import type { SaveData, WorldPersistence } from './systems/persistence/saveSchema';
 import type { SaveManager } from './systems/persistence/SaveManager';
 import { EquipmentManager, InventoryManager, LootTableManager } from './systems/progression/inventory';
@@ -130,7 +131,14 @@ export interface UiSnapshot {
   money: number;
   area: string | null;
   toasts: Toast[];
-  dialogue: { speaker: string; line: string; index: number; total: number } | null;
+  dialogue: {
+    speaker: string;
+    line: string;
+    index: number;
+    total: number;
+    left: { portrait: PortraitId; name: string; expression: TalkExpression; speaking: boolean };
+    right: { portrait: PortraitId; name: string; expression: TalkExpression; speaking: boolean };
+  } | null;
   rewards: RewardSummary | null;
   save: { status: 'idle' | 'saving' | 'saved' | 'error'; text: string };
   minimap: { w: number; h: number; player: { x: number; z: number; yaw: number }; enemies: { x: number; z: number; boss: boolean }[]; points: { x: number; z: number; kind: string }[] };
@@ -331,7 +339,12 @@ export class Game {
   private projectileSeq = 0;
   private toasts: Toast[] = [];
   private toastSeq = 0;
-  private dialogue: { speaker: string; lines: string[]; index: number } | null = null;
+  private dialogue: {
+    starter: { name: string; portrait: PortraitId };
+    listener: { name: string; portrait: PortraitId };
+    lines: { side: 'starter' | 'listener'; text: string; expression: TalkExpression }[];
+    index: number;
+  } | null = null;
   private rewards: RewardSummary | null = null;
   private saveStatus: UiSnapshot['save'] = { status: 'idle', text: '' };
   private saveStatusUntil = 0;
@@ -491,6 +504,7 @@ export class Game {
       });
     });
     this.trail.reset(px, pz);
+    resetCompanionWander();
 
     for (const g of map.enemyGroups) {
       g.members.forEach((mem, i) => {
@@ -863,10 +877,12 @@ export class Game {
     for (const h of this.heroes()) this.tickWorldVitals(h);
     this.trail.record(leader.transform.pos.x, leader.transform.pos.z);
     const running = this.held('dash');
+    const leaderStill = Math.hypot(leader.body?.vel.x ?? 0, leader.body?.vel.z ?? 0) < 0.12;
+    const settled = leaderStill && !this.dialogue;
     let slot = 0;
     for (const h of this.heroes()) {
       if (h === leader) continue;
-      followTrail(h, this.map.tiles, this.trail, slot++, running);
+      followTrail(h, this.map.tiles, this.trail, slot++, running, settled);
     }
     const enemies = this.world.query('explorer');
     this.explorerAI.update(enemies, leader, this.map.tiles, this.rng, (e) => {
@@ -902,15 +918,22 @@ export class Game {
       case 'npc': {
         const npc = this.map.npcs.find((n) => n.id === it.refId)!;
         const updates = this.quests.onTalk(npc.id);
-        const lines = [...npc.dialogue];
+        const lines = npc.dialogue.map((l) => ({ side: 'starter' as const, text: l.text, expression: l.expression }));
         for (const u of updates) {
-          if (u.kind === 'started') lines.push(`[Misión] ${u.text}: ${QUESTS[u.questId].description}`);
-          if (u.kind === 'completed') lines.push(`¡Excelente trabajo! Misión "${u.text}" completada.`);
+          if (u.kind === 'started') lines.push({ side: 'starter', text: `[Misión] ${u.text}: ${QUESTS[u.questId].description}`, expression: 'serious' });
+          if (u.kind === 'completed') lines.push({ side: 'starter', text: `¡Excelente trabajo! Misión "${u.text}" completada.`, expression: 'smile' });
         }
         this.handleQuestUpdates(updates);
-        this.dialogue = { speaker: npc.name, lines, index: 0 };
+        const leaderId = leader.hero?.characterId ?? 'kaien';
+        this.dialogue = {
+          starter: { name: npc.name, portrait: portraitOf(npc.appearance) },
+          listener: { name: CHARACTERS[leaderId]?.name ?? 'Goku', portrait: portraitOf(leaderId) },
+          lines,
+          index: 0,
+        };
         e.transform.yaw = Math.atan2(leader.transform.pos.x - e.transform.pos.x, leader.transform.pos.z - e.transform.pos.z);
-        this.events.emit('dialogue', { speaker: npc.name, lines });
+        this.events.emit('dialogue', { speaker: npc.name, lines: lines.map((l) => l.text) });
+        this.notify();
         break;
       }
       case 'chest': {
@@ -2008,6 +2031,23 @@ export class Game {
     for (const l of this.uiListeners) l();
   }
 
+  /** Starter stands on the left, looking toward the listener on the right. */
+  private dialogueView(): UiSnapshot['dialogue'] {
+    const d = this.dialogue;
+    if (!d) return null;
+    const cur = d.lines[d.index];
+    if (!cur) return null;
+    const leftSpeaking = cur.side === 'starter';
+    return {
+      speaker: leftSpeaking ? d.starter.name : d.listener.name,
+      line: cur.text,
+      index: d.index,
+      total: d.lines.length,
+      left: { portrait: d.starter.portrait, name: d.starter.name, expression: leftSpeaking ? cur.expression : 'neutral', speaking: leftSpeaking },
+      right: { portrait: d.listener.portrait, name: d.listener.name, expression: leftSpeaking ? 'neutral' : cur.expression, speaking: !leftSpeaking },
+    };
+  }
+
   private buildUi(): UiSnapshot {
     const state = this.fsm.state;
     const party = this.partyOrder.map((id) => {
@@ -2125,7 +2165,7 @@ export class Game {
       money: this.money,
       area: this.map.areas.find((a) => a.id === this.currentArea)?.name ?? null,
       toasts: [...this.toasts],
-      dialogue: this.dialogue ? { speaker: this.dialogue.speaker, line: this.dialogue.lines[this.dialogue.index], index: this.dialogue.index, total: this.dialogue.lines.length } : null,
+      dialogue: this.dialogueView(),
       rewards: this.rewards,
       save: this.saveStatus,
       minimap: {

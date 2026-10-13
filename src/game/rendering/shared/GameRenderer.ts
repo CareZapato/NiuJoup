@@ -432,6 +432,9 @@ export class GameRenderer {
   private scratch = vec3();
   /** World clock (slowed by focus); drives water, props and effects. */
   private time = 0;
+  /** Wrapped sway clock and a smoothed cross-wind, so crowns do not shiver. */
+  private windPhase = 0;
+  private swaySide = 0;
   private maxFx: number;
   private exterior: THREE.Mesh[] = [];
   private floorTex: THREE.DataTexture;
@@ -793,7 +796,7 @@ export class GameRenderer {
    * are cut away: stretched for the pitch, they would otherwise cover half
    * the view at the map edges.
    */
-  private updateTrees(yaw: number, stretch: number): void {
+  private updateTrees(yaw: number, stretch: number, dt: number): void {
     const rig = this.game.camera;
     const cx = rig.position.x;
     const cz = rig.position.z;
@@ -806,7 +809,10 @@ export class GameRenderer {
     const wind = this.game.wind;
     const rightX = Math.cos(yaw);
     const rightZ = -Math.sin(yaw);
-    const side = wind.dirX * rightX + wind.dirZ * rightZ;
+    const targetSide = wind.dirX * rightX + wind.dirZ * rightZ;
+    const follow = 1 - Math.exp(-Math.max(0, dt) * 0.55);
+    this.swaySide += (targetSide - this.swaySide) * follow;
+    this.windPhase = (this.windPhase + Math.max(0, dt) * 0.55) % (Math.PI * 2);
     const counters = [0, 0, 0, 0];
     for (const t of this.treeData) {
       const ahead = (t.x - cx) * fx + (t.z - cz) * fz;
@@ -817,12 +823,10 @@ export class GameRenderer {
         const h = 3.5 * t.size * shape.h * stretch;
         this.tmpS.set(h * shape.aspect, h, 1);
       }
-      const phase = t.x * 0.37 + t.z * 0.21;
-      const sway = Math.sin(this.time * 0.55 + phase);
-      const drift = Math.sin(this.time * 0.22 + phase * 1.3);
-      const amount = 0.82 + 0.14 * sway + 0.04 * drift;
+      const phase = (t.x * 0.23 + t.z * 0.17) % (Math.PI * 2);
+      const sway = 0.78 + 0.22 * Math.sin(this.windPhase + phase);
       // Negative roll sends the crown toward camera-right when the wind blows that way.
-      const angle = -BALANCE.wind.treeLean * wind.strength * amount * side;
+      const angle = -BALANCE.wind.treeLean * wind.strength * sway * this.swaySide;
       this.tiltQ.setFromAxisAngle(this.face, angle);
       this.tmpQ.setFromAxisAngle(this.up, yaw).multiply(this.tiltQ);
       this.tmpMat.compose(this.tmpV, this.tmpQ, this.tmpS);
@@ -1317,7 +1321,7 @@ export class GameRenderer {
 
     const camYaw = rig.pose.yaw;
     const stretch = 1 / Math.max(Math.cos(rig.pose.pitch), 0.5);
-    this.updateTrees(camYaw, stretch);
+    this.updateTrees(camYaw, stretch, dt);
     if (!this.paintedWater) {
       const painted = this.backdrop.takeWater();
       if (painted) {

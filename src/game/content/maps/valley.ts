@@ -1,3 +1,4 @@
+import type { TalkLine } from '../dialogue';
 import { Rng } from '../../core/math';
 import { TileMap } from '../../world/TileMap';
 import type { TileChar } from '../../world/tiles';
@@ -8,7 +9,7 @@ export interface NpcDef {
   x: number;
   z: number;
   appearance: 'master' | 'villager' | 'smith';
-  dialogue: string[];
+  dialogue: TalkLine[];
 }
 export interface ChestDef {
   id: string;
@@ -180,7 +181,10 @@ export function buildValley(): MapDef {
         x: 10.5,
         z: 7.5,
         appearance: 'master',
-        dialogue: ['Bienvenido de nuevo. El valle es perfecto para entrenar.', 'Recuerda: J, J, K encadena un combo. U para defenderte, I para cargar Ki.'],
+        dialogue: [
+          { text: 'Bienvenido de nuevo. El valle es perfecto para entrenar.', expression: 'smile' },
+          { text: 'Recuerda: J, J, K encadena un combo. U para defenderte, I para cargar Ki.', expression: 'serious' },
+        ],
       },
       {
         id: 'villager_a',
@@ -188,7 +192,10 @@ export function buildValley(): MapDef {
         x: 18.5,
         z: 10.5,
         appearance: 'villager',
-        dialogue: ['Hay una roca agrietada al noreste, junto a los riscos.', 'Dicen que un Kamehameha, un Kienzan o un Sōkidan la harían pedazos...'],
+        dialogue: [
+          { text: 'Hay una roca agrietada al noreste, junto a los riscos.', expression: 'neutral' },
+          { text: 'Dicen que un Kamehameha, un Kienzan o un Sōkidan la harían pedazos...', expression: 'surprise' },
+        ],
       },
       {
         id: 'smith',
@@ -196,7 +203,10 @@ export function buildValley(): MapDef {
         x: 8.5,
         z: 9.5,
         appearance: 'smith',
-        dialogue: ['El cristal azul junto a la plaza restaura energías y guarda tu progreso.', 'Pulsa Tab para cambiar de líder del grupo.'],
+        dialogue: [
+          { text: 'El cristal azul junto a la plaza restaura energías y guarda tu progreso.', expression: 'smile' },
+          { text: 'Pulsa Tab para cambiar de líder del grupo.', expression: 'neutral' },
+        ],
       },
     ],
     chests: [
