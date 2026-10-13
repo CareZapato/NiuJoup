@@ -7,6 +7,7 @@ import hillsUrl from '../../../../assets/generated/sprites/Nuevos/Entorno/colina
 import propsUrl from '../../../../assets/generated/sprites/Nuevos/Entorno/fachadas.png';
 import mountainsUrl from '../../../../assets/generated/sprites/Nuevos/Entorno/montanas_lejanas.png';
 import groundUrl from '../../../../assets/generated/sprites/Nuevos/Entorno/suelo.png';
+import { patchWorld } from './worldGrade';
 
 /** Quad with its origin at the bottom center, facing +Z. */
 function horizonQuad(): THREE.BufferGeometry {
@@ -112,6 +113,21 @@ export class ValleyBackdrop {
   dressMap(tiles: TileMap): void {
     this.tiles = tiles;
     this.rebuild();
+  }
+
+  /** Sky and hill tint, plus the night glow of house windows. */
+  setGrade(r: number, g: number, b: number, windowGlow: number): void {
+    for (const layer of this.layers) {
+      const mat = layer.mesh.material as THREE.MeshBasicMaterial;
+      mat.color.setRGB(r, g, b);
+    }
+    for (const obj of this.solids) {
+      obj.traverse((node) => {
+        if (node.userData.kind !== 'window') return;
+        const mat = (node as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        mat.opacity = windowGlow;
+      });
+    }
   }
 
   update(camX: number, camZ: number, focusX: number, focusZ: number, yaw: number, time: number, reducedMotion: boolean): void {
@@ -229,12 +245,12 @@ export class ValleyBackdrop {
     const roof = (cell: number, tint = 0xffffff) => this.faceMat(tex, img, cell, ValleyBackdrop.SPLIT[cell], 1, tint);
     const full = (cell: number, tint = 0xffffff) => this.faceMat(tex, img, cell, 0, 1, tint);
     this.addSolid(this.capsuleHouse(7, 5.5, wall(0), roof(0)));
-    this.addSolid(this.squareHouse(15.5, 5.5, wall(1), wall(1, 0x9a9a9a, 0.04, 0.34), roof(1)));
-    this.addSolid(this.roundHouse(6, 12.5, wall(2), roof(2), wall(2, 0x9a9a9a, 0.62, 0.98)));
+    this.addSolid(this.squareHouse(15.5, 5.5, wall(1), wall(1, 0xffffff, 0.4, 0.62), roof(1)));
+    this.addSolid(this.roundHouse(6, 12.5, wall(2), roof(2), wall(2, 0xffffff, 0.66, 0.92)));
     this.addFences(tiles, full(6));
     this.addRocks(tiles, full(4));
     this.addBridge(tiles, wall(7), roof(7));
-    this.addCliffs(tiles, this.cliffTex ? new THREE.MeshBasicMaterial({ map: this.cliffTex, fog: false }) : full(5));
+    this.addCliffs(tiles, this.cliffTex ? patchWorld(new THREE.MeshBasicMaterial({ map: this.cliffTex, fog: false })) : full(5));
   }
 
   private clearSolids(): void {
@@ -271,7 +287,7 @@ export class ValleyBackdrop {
     slice.wrapS = slice.wrapT = THREE.ClampToEdgeWrapping;
     slice.needsUpdate = true;
     this.slices.push(slice);
-    return new THREE.MeshBasicMaterial({ map: slice, color: tint, alphaTest: 0.2, fog: false });
+    return patchWorld(new THREE.MeshBasicMaterial({ map: slice, color: tint, alphaTest: 0.2, fog: false }));
   }
 
   private capsuleHouse(x: number, z: number, wall: THREE.Material, domeMat: THREE.Material): THREE.Group {
@@ -281,6 +297,9 @@ export class ValleyBackdrop {
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1.45, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
     dome.position.y = 1.7;
     g.add(body, dome);
+    // Porthole sits on the +X side of the wrapped metal, not on the front face.
+    const porthole = 0.26 * Math.PI * 2;
+    this.addWindow(g, Math.sin(porthole) * 1.58, 1, Math.cos(porthole) * 1.58, 0.5, 0.48, porthole);
     g.position.set(x, 0, z);
     return g;
   }
@@ -288,11 +307,19 @@ export class ValleyBackdrop {
   /** Rectangular dojo: a box, with the tile band on a slab that overhangs the walls. */
   private squareHouse(x: number, z: number, front: THREE.Material, side: THREE.Material, roofMat: THREE.Material): THREE.Group {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.05, 2.5), [side, side, front, front, front, front]);
+    // Top is tile, not the wall, so the shoji grids never land on the roof.
+    const body = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.05, 2.5), [side, side, roofMat, side, front, front]);
     body.position.y = 1.02;
     const roof = new THREE.Mesh(new THREE.BoxGeometry(4.9, 0.78, 3.05), roofMat);
     roof.position.y = 2.4;
     g.add(body, roof);
+    const winY = 1.08;
+    const winW = 1.05;
+    const winH = 0.58;
+    this.addWindow(g, -1.58, winY, 1.28, winW, winH);
+    this.addWindow(g, 1.58, winY, 1.28, winW, winH);
+    this.addWindow(g, -1.58, winY, -1.28, winW, winH, Math.PI);
+    this.addWindow(g, 1.58, winY, -1.28, winW, winH, Math.PI);
     g.position.set(x, 0, z);
     return g;
   }
@@ -303,11 +330,33 @@ export class ValleyBackdrop {
     body.position.y = 0.82;
     const cap = new THREE.Mesh(new THREE.ConeGeometry(1.85, 1.35, 8), roofMat);
     cap.position.y = 2.15;
-    const lean = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.15, 0.7), side);
+    const stucco = patchWorld(new THREE.MeshBasicMaterial({ color: 0xf3e0c0, fog: false }));
+    const lean = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.15, 0.7), [stucco, stucco, roofMat, stucco, side, stucco]);
     lean.position.set(1.55, 0.58, 0.4);
     g.add(body, cap, lean);
+    const pane = 0.78 * Math.PI * 2;
+    this.addWindow(g, Math.sin(pane) * 1.48, 0.93, Math.cos(pane) * 1.48, 0.62, 0.4, pane);
+    this.addWindow(g, 1.51, 0.66, 0.78, 0.32, 0.34);
     g.position.set(x, 0, z);
     return g;
+  }
+
+  private addWindow(parent: THREE.Object3D, x: number, y: number, z: number, w: number, h: number, yaw = 0): void {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffcc77,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = yaw;
+    mesh.userData.kind = 'window';
+    mesh.renderOrder = 3;
+    parent.add(mesh);
   }
 
   private addFences(tiles: TileMap, mat: THREE.Material): void {

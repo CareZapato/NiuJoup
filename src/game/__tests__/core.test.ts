@@ -123,6 +123,9 @@ describe('collision', () => {
     const map = buildValley();
     const t = map.tiles;
     expect(t.canOccupy(map.start.x, map.start.z, 0, 0.3, 0.55, false)).toBe(true);
+    const lamp = map.lamps.find((l) => l.x === 26.2 && l.z === 22.4)!;
+    expect(t.canOccupy(lamp.x, lamp.z, 0, 0.3, 0.55, false)).toBe(false);
+    expect(t.canOccupy(lamp.x + 1.2, lamp.z, 0, 0.3, 0.55, false)).toBe(true);
     expect(t.canOccupy(0.5, 0.5, 0, 0.3, 0.55, false)).toBe(false);
     expect(t.lineOfSight(map.start.x, map.start.z, map.start.x + 1, map.start.z, 1)).toBe(true);
     expect(t.lineOfSight(map.start.x, map.start.z, 0.5, 0.5, 1)).toBe(false);

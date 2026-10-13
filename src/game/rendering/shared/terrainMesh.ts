@@ -40,6 +40,33 @@ function pathCell(map: TileMap, x: number, z: number): number {
   return best;
 }
 
+/** Interior dirt, plus the ring and the footprint cells of arena_suelo.png. */
+const ARENA_FILL = [0, 1, 2, 3, 4, 5, 6, 7, 24, 26, 27, 31];
+const ARENA_STONE = [25, 29];
+
+function pickId(ids: number[], h: number): number {
+  return ids[Math.min(ids.length - 1, Math.floor(h * ids.length))]!;
+}
+
+/** Grass-border autotile for the training court. Outside means any tile that is not sand. */
+function arenaCell(map: TileMap, x: number, z: number): number {
+  const out = (dx: number, dz: number): boolean => map.charAt(x + dx, z + dz) !== 'G';
+  const n = out(0, -1);
+  const e = out(1, 0);
+  const s = out(0, 1);
+  const w = out(-1, 0);
+  const h = hash2(x, z);
+  if (!n && !e && !s && !w) return h > 0.94 ? pickId(ARENA_STONE, hash2(x + 4, z + 2)) : pickId(ARENA_FILL, h);
+  if (n && w && !e && !s) return pickId([16, 20], h);
+  if (n && e && !s && !w) return pickId([17, 21], h);
+  if (s && w && !n && !e) return pickId([18, 22], h);
+  if (s && e && !n && !w) return pickId([19, 23], h);
+  if (n) return pickId([8, 12], h);
+  if (s) return pickId([10, 14], h);
+  if (e) return pickId([9, 13], h);
+  return pickId([11, 15], h);
+}
+
 function topTile(map: TileMap, c: TileChar, x: number, z: number, painted: boolean): number {
   const h = hash2(x, z);
   if (painted) {
@@ -120,7 +147,13 @@ function renderHeight(map: TileMap, x: number, z: number): number {
  * Builds the whole map (ground, plateaus, cliffs, houses, fences) as ONE mesh
  * with one atlas texture: a single draw call, cheap on mobile GPUs.
  */
-export function buildTerrainGeometry(map: TileMap, painted = false): THREE.BufferGeometry {
+/**
+ * `sand` true omits the training court (drawn from arena_suelo.png).
+ * `'only'` emits just that court, with the arena sheet's 8×4 cells.
+ */
+export function buildTerrainGeometry(map: TileMap, painted = false, sand: boolean | 'only' = false): THREE.BufferGeometry {
+  const onlySand = sand === 'only';
+  const skipSand = sand === true;
   const pos: number[] = [];
   const uv: number[] = [];
   const col: number[] = [];
@@ -155,6 +188,8 @@ export function buildTerrainGeometry(map: TileMap, painted = false): THREE.Buffe
   for (let z = 0; z < map.height; z++) {
     for (let x = 0; x < map.width; x++) {
       const c = map.charAt(x, z);
+      if (onlySand && c !== 'G') continue;
+      if (skipSand && c === 'G') continue;
       const h = renderHeight(map, x, z);
       if (!TILES[c].liquid) {
         // Top face (NW, NE, SW, SE).
@@ -165,7 +200,7 @@ export function buildTerrainGeometry(map: TileMap, painted = false): THREE.Buffe
             [x, h, z + 1],
             [x + 1, h, z + 1],
           ],
-          topTile(map, c, x, z, painted),
+          onlySand ? arenaCell(map, x, z) : topTile(map, c, x, z, painted),
           1,
         );
       }
