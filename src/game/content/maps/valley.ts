@@ -58,6 +58,8 @@ export interface MapDef {
   enemyGroups: EnemyGroupDef[];
   boulders: BoulderDef[];
   areas: AreaDef[];
+  /** Path lamps. White marks in the village, road and sand court; the bridge corner is the red mark. */
+  lamps: { x: number; z: number }[];
 }
 
 class MapBuilder {
@@ -143,7 +145,7 @@ export function buildValley(): MapDef {
   for (const [x, z] of rocks) b.set(x, z, 'o');
 
   const keepClear = (x: number, z: number): boolean => {
-    const clear: [number, number, number][] = [
+      const clear: [number, number, number][] = [
       [24, 17, 4], [20, 34, 4], [30, 40, 4], [13, 10, 3], [16, 12, 2], [28, 28, 2], [33, 15, 2], [15, 41, 2], [26, 37, 3],
     ];
     return clear.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r);
@@ -159,10 +161,12 @@ export function buildValley(): MapDef {
       else if (r > 0.9) b.set(x, z, ',');
     }
   }
+  // The tree on this tile stood in front of the smith and hid him.
+  b.set(8, 10, '.');
 
   const tiles = new TileMap(W, H, b.t);
 
-  return {
+  const valley: MapDef = {
     id: 'valley',
     name: 'Valle de entrenamiento',
     biome: 'valley',
@@ -231,5 +235,29 @@ export function buildValley(): MapDef {
       { id: 'secret', name: 'Rincón oculto', x0: 49, z0: 4, x1: 58, z1: 11 },
       { id: 'plateau', name: 'Meseta del risco', x0: 44, z0: 33, x1: 60, z1: 45 },
     ],
+    lamps: [
+      { x: 8.6, z: 6.4 },
+      { x: 13.6, z: 6.4 },
+      { x: 11.1, z: 13.8 },
+      { x: 14.2, z: 12.2 },
+      { x: 8.6, z: 17.2 },
+      { x: 14.4, z: 17.2 },
+      { x: 18.4, z: 22.4 },
+      { x: 18.4, z: 25.6 },
+      { x: 26.2, z: 22.4 },
+      { x: 26.2, z: 25.6 },
+      { x: 33.2, z: 22.4 },
+      { x: 36.8, z: 25.8 },
+      { x: 42.2, z: 22.4 },
+      { x: 42.2, z: 25.6 },
+      { x: 43.2, z: 21.5 },
+      { x: 43.2, z: 26.5 },
+      { x: 46.4, z: 17.6 },
+      { x: 46.4, z: 29.4 },
+      { x: 56.6, z: 17.6 },
+      { x: 56.6, z: 29.4 },
+    ],
   };
+  for (const lamp of valley.lamps) valley.tiles.addCircleBlocker(lamp.x, lamp.z, 0.34, 2.4);
+  return valley;
 }

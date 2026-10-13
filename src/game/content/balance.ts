@@ -117,14 +117,28 @@ export const BALANCE = {
    * One wind for the whole valley. Direction is a unit vector on the ground.
    * Trees lean that way. The ground stays still.
    */
+  /**
+   * One sun for the valley. Day and night are equal real-time halves.
+   * Afternoon is the low sun inside the day half, not a third clock.
+   */
+  dayNight: {
+    daySeconds: 300,
+    nightSeconds: 300,
+    /** 0 = hard shadow, 1 = wide soft edge. */
+    shadowSoftness: 0.35,
+    /** Lamps, windows and ki glows. */
+    lightBrightness: 1,
+    /** Path lamp pool, in world units. */
+    lampRadius: 4.5,
+  },
   wind: {
     turnPerTick: 0.0004,
     gustSpeed: 0.018,
-    flutterSpeed: 0.09,
+    flutterSpeed: 0.01,
     minStrength: 0.28,
     maxStrength: 0.85,
-    /** How far a tree top slides, in local units, at full strength. */
-    treeLean: 0.2,
+    /** Rigid tilt in radians when the wind blows fully across the view. */
+    treeLean: 0.08,
   },
   exploration: {
     walkSpeed: 4.2,

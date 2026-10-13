@@ -4,6 +4,8 @@ export class TileMap {
   readonly tiles: TileChar[];
   /** Tile-indexed overrides for dynamic blockers (e.g. breakable boulders), height or -1. */
   private dynamicHeight: Float32Array;
+  /** Upright cylinders (lamp posts) that a body cannot walk through. */
+  private circles: { x: number; z: number; radius: number; height: number }[] = [];
 
   constructor(
     readonly width: number,
@@ -58,6 +60,11 @@ export class TileMap {
     if (this.inBounds(tx, tz)) this.dynamicHeight[tz * this.width + tx] = -1;
   }
 
+  /** Blocks movement around a post. `height` is how high the body must be to pass over it. */
+  addCircleBlocker(x: number, z: number, radius: number, height: number): void {
+    this.circles.push({ x, z, radius, height });
+  }
+
   /**
    * Can a circle of `radius` at (x,z) with feet at height y occupy this spot?
    * Samples the four extremes of the circle against tile heights.
@@ -69,6 +76,13 @@ export class TileMap {
       const h = this.heightAt(sx, sz);
       if (h > y + stepUp) return false;
       if (!flying && y < 0.05 && this.isLiquid(sx, sz)) return false;
+    }
+    for (const b of this.circles) {
+      if (y + stepUp >= b.height) continue;
+      const dx = x - b.x;
+      const dz = z - b.z;
+      const reach = radius + b.radius;
+      if (dx * dx + dz * dz < reach * reach) return false;
     }
     return true;
   }

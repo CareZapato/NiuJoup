@@ -353,6 +353,14 @@ function blitCrop(atlas: Uint8Array, atlasW: number, destX: number, destY: numbe
   const sh = crop.maxY - crop.minY + 1;
   let dw = Math.max(1, Math.round(sw * scale));
   let dh = Math.max(1, Math.round(sh * scale));
+  // Keep the body inside the cell. A source pose drawn larger than the others
+  // would otherwise fill the frame and clip the head.
+  const maxH = 82;
+  if (dh > maxH) {
+    scale *= maxH / dh;
+    dh = maxH;
+    dw = Math.max(1, Math.round(sw * scale));
+  }
   // A horizontal pose (fly, kick) can be wider than the cell. Shrink that frame so the fists stay inside.
   if (dw > fw - 2) {
     scale = (fw - 2) / sw;

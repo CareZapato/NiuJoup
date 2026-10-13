@@ -50,6 +50,37 @@ export function DebugOverlay() {
           }}
         />
       </View>
+      <View style={styles.light} pointerEvents="box-none">
+        <Txt size={14} color={COLORS.good}>
+          Luz · fase {ui.light.phase.toFixed(3)} · sol {ui.light.elevation.toFixed(2)} · sepia {ui.light.sepia.toFixed(2)} · noche {ui.light.night.toFixed(2)}
+        </Txt>
+        <Txt size={14}>nitidez {ui.light.shadowSoftness.toFixed(2)} (0 dura, 1 suave)</Txt>
+        <View style={styles.row}>
+          <PixelButton small label="−" onPress={() => game.debugSetLight({ shadowSoftness: ui.light.shadowSoftness - 0.05 })} />
+          <PixelButton small label="+" onPress={() => game.debugSetLight({ shadowSoftness: ui.light.shadowSoftness + 0.05 })} />
+        </View>
+        <Txt size={14}>brillo {ui.light.lightBrightness.toFixed(2)}</Txt>
+        <View style={styles.row}>
+          <PixelButton small label="−" onPress={() => game.debugSetLight({ lightBrightness: ui.light.lightBrightness - 0.1 })} />
+          <PixelButton small label="+" onPress={() => game.debugSetLight({ lightBrightness: ui.light.lightBrightness + 0.1 })} />
+        </View>
+        <Txt size={14}>radio lámpara {ui.light.lampRadius.toFixed(2)}</Txt>
+        <View style={styles.row}>
+          <PixelButton small label="−" onPress={() => game.debugSetLight({ lampRadius: ui.light.lampRadius - 0.25 })} />
+          <PixelButton small label="+" onPress={() => game.debugSetLight({ lampRadius: ui.light.lampRadius + 0.25 })} />
+        </View>
+        <Txt size={14}>hora {ui.light.mode}</Txt>
+        <View style={styles.row}>
+          <PixelButton small label="Auto" active={ui.light.mode === 'auto'} onPress={() => game.debugSetLight({ mode: 'auto' })} />
+          <PixelButton small label="Día" active={ui.light.mode === 'day'} onPress={() => game.debugSetLight({ mode: 'day' })} />
+          <PixelButton small label="Tarde" active={ui.light.mode === 'afternoon'} onPress={() => game.debugSetLight({ mode: 'afternoon' })} />
+          <PixelButton small label="Noche" active={ui.light.mode === 'night'} onPress={() => game.debugSetLight({ mode: 'night' })} />
+        </View>
+        <View style={styles.row}>
+          <PixelButton small label="fase −" onPress={() => game.debugSetLight({ mode: 'scrub', phase: ui.light.phase - 0.02 })} />
+          <PixelButton small label="fase +" onPress={() => game.debugSetLight({ mode: 'scrub', phase: ui.light.phase + 0.02 })} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -58,5 +89,7 @@ const styles = StyleSheet.create({
   root: { ...StyleSheet.absoluteFill },
   text: { position: 'absolute', left: 230, top: 8, right: 160, backgroundColor: 'rgba(0,0,0,0.6)', padding: 4 },
   buttons: { position: 'absolute', right: 8, bottom: 120, width: 140 },
+  light: { position: 'absolute', left: 250, bottom: 8, width: 320, backgroundColor: 'rgba(0,0,0,0.72)', padding: 6 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 },
   fps: { position: 'absolute', left: '50%', bottom: 4 },
 });

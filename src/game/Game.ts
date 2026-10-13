@@ -19,6 +19,7 @@ import { CombatAI } from './systems/ai/CombatAI';
 import { ExplorerAI } from './systems/ai/ExplorerAI';
 import { POSE_ANIM, updateAnimations } from './systems/animation/AnimationSystem';
 import { createWind, stepWind, type WindState } from './systems/world/Wind';
+import { applyDayLook, createDayNight, stepDayNight, type DayMode, type DayNightState } from './systems/world/DayNight';
 import { CameraRig, type CameraPose, makePose, screenToWorld, worldToScreen, yawForScreenRight } from './systems/camera/CameraRig';
 import { type Arena, canAct, type CombatContext, CombatSystem, techniqueBlocker } from './systems/combat/CombatSystem';
 import { chargeKi, penalizeKi, regenKi, spendKi } from './systems/combat/ki';
@@ -136,6 +137,16 @@ export interface UiSnapshot {
   controlledMoves: { id: string; name: string; cooldown: number; kiCost: number; affordable: boolean }[];
   specialReady: boolean;
   debug: { fps: number; tick: number; entities: number; lines: string[] } | null;
+  light: {
+    phase: number;
+    mode: DayMode;
+    shadowSoftness: number;
+    lightBrightness: number;
+    lampRadius: number;
+    elevation: number;
+    sepia: number;
+    night: number;
+  };
   playTime: number;
 }
 
@@ -259,6 +270,8 @@ export class Game {
   settings: Settings = { ...DEFAULT_SETTINGS, bindings: { ...DEFAULT_SETTINGS.bindings } };
   /** Valley wind. Trees lean with it. */
   readonly wind: WindState = createWind();
+  /** Sun clock. Day and night are five real minutes each. */
+  readonly day: DayNightState = createDayNight();
 
   roster: Record<string, PartyMember> = {};
   partyOrder: string[] = [];
@@ -515,7 +528,7 @@ export class Game {
         stableId: p.id,
         kind: 'pickup',
         transform: { pos: vec3(p.x, map.tiles.heightAt(p.x, p.z), p.z), prev: vec3(p.x, 0, p.z), yaw: 0 },
-        sprite: sprite(ITEMS[p.itemId].type === 'quest' ? 'prop:stone' : 'prop:pickup', 1),
+        sprite: sprite(`item:${p.itemId}`, 1),
         interactable: { kind: 'pickup', refId: p.id, radius: 0.9, used: false, prompt: '' },
       });
     }
@@ -566,6 +579,7 @@ export class Game {
   frame(dt: number): number {
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
     this.realTime += dt;
+    stepDayNight(this.day, Math.min(Math.max(0, dt), 0.1), this.settings.reducedMotion);
     this.pollGamepad();
     if (this.focus.active) this.updateFocus(dt);
     // One multiplier, owned by focus. Hitstop is per-entity and never stacks with it.
@@ -1876,6 +1890,17 @@ export class Game {
 
   // ---------------------------------------------------------------- debug
 
+  debugSetLight(patch: Partial<Pick<DayNightState, 'mode' | 'phase' | 'shadowSoftness' | 'lightBrightness' | 'lampRadius'>>): void {
+    if (patch.mode != null) this.day.mode = patch.mode;
+    if (patch.phase != null) this.day.phase = ((patch.phase % 1) + 1) % 1;
+    if (patch.shadowSoftness != null) this.day.shadowSoftness = patch.shadowSoftness;
+    if (patch.lightBrightness != null) this.day.lightBrightness = patch.lightBrightness;
+    if (patch.lampRadius != null) this.day.lampRadius = patch.lampRadius;
+    if (this.day.mode !== 'auto' && this.day.mode !== 'scrub') stepDayNight(this.day, 0, false);
+    else applyDayLook(this.day);
+    this.notify();
+  }
+
   debugAddPower(amount: number): void {
     this.pb.add('player', amount);
     if (this.pb.dominance) this.events.emit('dominance', { team: this.pb.dominance });
@@ -2117,6 +2142,16 @@ export class Game {
             .map((m) => ({ id: m.id, name: m.name, cooldown: ctlC.cooldowns[m.id] ?? 0, kiCost: m.kiCost, affordable: ctlC.ki >= m.kiCost }))
         : [],
       specialReady: !!ac && limitReady(ac),
+      light: {
+        phase: this.day.phase,
+        mode: this.day.mode,
+        shadowSoftness: this.day.shadowSoftness,
+        lightBrightness: this.day.lightBrightness,
+        lampRadius: this.day.lampRadius,
+        elevation: this.day.elevation,
+        sepia: this.day.sepia,
+        night: this.day.night,
+      },
       debug: this.settings.debug ? this.debugInfo() : null,
       playTime: Math.floor(this.playTime),
     };
