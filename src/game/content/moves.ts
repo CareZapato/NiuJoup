@@ -239,7 +239,7 @@ export const MOVES: Record<string, MoveDef> = {
     vfx: 'ki_wave',
     command: { sequence: [2, 6], buttons: ['ki'], priority: 10, label: 'S, D + L' },
     unlockedBy: null,
-    description: 'Onda perforante del Gólem del risco (ataque enemigo).',
+    description: 'Onda perforante del Dinosaurio del risco (ataque enemigo).',
   },
   meteor_impact: {
     ...base,

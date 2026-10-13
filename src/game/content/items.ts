@@ -52,7 +52,7 @@ export const QUESTS: Record<string, QuestDef> = {
       { kind: 'defeat', enemyId: 'any', count: 3, text: 'Derrota a 3 enemigos' },
       { kind: 'earnAp', amount: 2, text: 'Gana 2 AP' },
       { kind: 'unlockSkill', text: 'Desbloquea una técnica (menú > Habilidades)' },
-      { kind: 'defeatBoss', enemyId: 'golem', text: 'Vence al Gólem del risco (meseta sureste)' },
+      { kind: 'defeatBoss', enemyId: 'golem', text: 'Vence al Dinosaurio del risco (meseta sureste)' },
       { kind: 'talk', npcId: 'master', text: 'Regresa con el maestro' },
     ],
     rewards: { xp: 200, ap: 3, money: 100, items: [{ itemId: 'reinforced_gi', count: 1 }] },

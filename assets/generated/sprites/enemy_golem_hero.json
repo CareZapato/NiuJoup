@@ -1,0 +1,262 @@
+{
+  "id": "enemy:golem:hero",
+  "frameWidth": 64,
+  "frameHeight": 96,
+  "pivot": {
+    "x": 32,
+    "y": 94
+  },
+  "views": [
+    "S",
+    "SE",
+    "E",
+    "NE",
+    "N"
+  ],
+  "anims": {
+    "idle": {
+      "frames": 4,
+      "fps": 3,
+      "loop": true
+    },
+    "idle_wait": {
+      "frames": 4,
+      "fps": 2,
+      "loop": true
+    },
+    "walk": {
+      "frames": 4,
+      "fps": 8,
+      "loop": true,
+      "events": {
+        "1": "footstep",
+        "3": "footstep"
+      }
+    },
+    "run": {
+      "frames": 4,
+      "fps": 12,
+      "loop": true,
+      "events": {
+        "1": "footstep",
+        "3": "footstep"
+      }
+    },
+    "jump": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "pickup": {
+      "frames": 2,
+      "fps": 4,
+      "loop": false,
+      "events": {
+        "0": "pickup"
+      }
+    },
+    "interact": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "stance": {
+      "frames": 2,
+      "fps": 3,
+      "loop": true
+    },
+    "hover": {
+      "frames": 2,
+      "fps": 3,
+      "loop": true
+    },
+    "fly": {
+      "frames": 2,
+      "fps": 8,
+      "loop": true
+    },
+    "punch": {
+      "frames": 3,
+      "fps": 18,
+      "loop": false,
+      "events": {
+        "1": "impact"
+      }
+    },
+    "kick": {
+      "frames": 3,
+      "fps": 14,
+      "loop": false,
+      "events": {
+        "1": "impact"
+      }
+    },
+    "guard": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "dodge": {
+      "frames": 2,
+      "fps": 10,
+      "loop": false
+    },
+    "dash": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "charge": {
+      "frames": 2,
+      "fps": 10,
+      "loop": true
+    },
+    "kiblast": {
+      "frames": 2,
+      "fps": 10,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "hit": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "confused": {
+      "frames": 2,
+      "fps": 4,
+      "loop": true
+    },
+    "knockback": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "fall": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "defeat": {
+      "frames": 1,
+      "fps": 1,
+      "loop": false
+    },
+    "victory": {
+      "frames": 2,
+      "fps": 3,
+      "loop": true
+    },
+    "special": {
+      "frames": 2,
+      "fps": 6,
+      "loop": true
+    },
+    "tech_kamehameha": {
+      "frames": 3,
+      "fps": 4,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_kienzan": {
+      "frames": 3,
+      "fps": 4,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_taiyoken": {
+      "frames": 3,
+      "fps": 4,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_sokidan": {
+      "frames": 3,
+      "fps": 4,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_wolf_fang": {
+      "frames": 3,
+      "fps": 8,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_kaioken": {
+      "frames": 2,
+      "fps": 8,
+      "loop": true,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_barrage": {
+      "frames": 3,
+      "fps": 10,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    },
+    "tech_teleport": {
+      "frames": 3,
+      "fps": 8,
+      "loop": false,
+      "events": {
+        "1": "release"
+      }
+    }
+  },
+  "columns": {
+    "idle": 0,
+    "idle_wait": 4,
+    "walk": 8,
+    "run": 12,
+    "jump": 16,
+    "pickup": 17,
+    "interact": 19,
+    "stance": 20,
+    "hover": 22,
+    "fly": 24,
+    "punch": 26,
+    "kick": 29,
+    "guard": 32,
+    "dodge": 33,
+    "dash": 35,
+    "charge": 36,
+    "kiblast": 38,
+    "hit": 40,
+    "confused": 41,
+    "knockback": 43,
+    "fall": 44,
+    "defeat": 45,
+    "victory": 46,
+    "special": 48,
+    "tech_kamehameha": 50,
+    "tech_kienzan": 53,
+    "tech_taiyoken": 56,
+    "tech_sokidan": 59,
+    "tech_wolf_fang": 62,
+    "tech_kaioken": 65,
+    "tech_barrage": 67,
+    "tech_teleport": 70
+  },
+  "totalColumns": 73,
+  "gridColumns": 32,
+  "hurtbox": {
+    "width": 25.6,
+    "height": 86.4
+  }
+}

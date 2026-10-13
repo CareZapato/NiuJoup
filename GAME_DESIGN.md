@@ -25,7 +25,7 @@ Grupo activo de 3 (hay 4 en el plantel). Los inactivos reciben el 50 % de la XP.
 - **Pradera** y caminos centrales: brotes salvajes en patrulla, piedras de entrenamiento y un cofre.
 - **Río y puente** (x ≈ 38): el río bloquea el paso y el puente lo cruza.
 - **Zona de entrenamiento** (este, vallada): grupo de bandidos y brotes.
-- **Risco y meseta** (sureste): escaleras, y el **Gólem del risco** como mini-jefe (derrota persistente).
+- **Risco y meseta** (sureste): escaleras, y el **Dinosaurio del risco** como mini-jefe (derrota persistente).
 - **Rincón oculto** (noreste): bloqueado por una roca agrietada. La técnica **Onda de Ki** (S, D + L) la rompe y revela un cofre con la Reliquia antigua.
 - Los enemigos son **visibles**, patrullan, muestran "!" al detectarte (por distancia, línea de visión y altura) y te persiguen. No hay encuentros aleatorios.
 - Reaparición: los enemigos normales vuelven tras un tiempo de juego. Los jefes derrotados no vuelven.
@@ -73,7 +73,7 @@ Otras habilidades del árbol: Contraataque, Teletransporte, Entrenamiento de fue
 
 ## Misiones
 
-**Entrenamiento en el valle** (Maestro Hoku), 8 pasos: hablar con el maestro → recorrer la pradera → encontrar 2 piedras de entrenamiento → derrotar 3 enemigos → ganar 2 AP → desbloquear una técnica → vencer al Gólem del risco → volver con el maestro. Recompensa: 200 XP, 3 AP, 100 monedas y Gi reforzado.
+**Entrenamiento en el valle** (Maestro Hoku), 8 pasos: hablar con el maestro → recorrer la pradera → encontrar 2 piedras de entrenamiento → derrotar 3 enemigos → ganar 2 AP → desbloquear una técnica → vencer al Dinosaurio del risco → volver con el maestro. Recompensa: 200 XP, 3 AP, 100 monedas y Gi reforzado.
 
 **La roca agrietada** (Aldeana Mira): encontrar la zona oculta tras la roca, lo que requiere Onda de Ki.
 

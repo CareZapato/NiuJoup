@@ -436,6 +436,26 @@ export interface PaintedSheets {
   copies: Record<string, string>;
 }
 
+/** Repeats the last painted frame when a sheet has fewer steps than the atlas. */
+function fillShortAnims(crops: Crop[]): void {
+  const grouped = new Map<string, Crop[]>();
+  for (const c of crops) {
+    const list = grouped.get(c.anim) ?? [];
+    list.push(c);
+    grouped.set(c.anim, list);
+  }
+  for (const [anim, list] of grouped) {
+    const need = HERO_ANIMS[anim as keyof typeof HERO_ANIMS]?.frames ?? 0;
+    const frames = [...new Set(list.map((c) => c.frame))].sort((a, b) => a - b);
+    for (let f = 0; f < need; f++) {
+      if (frames.includes(f)) continue;
+      const use = [...frames].reverse().find((n) => n < f) ?? frames[0];
+      if (use == null) continue;
+      for (const c of list.filter((c) => c.frame === use)) crops.push({ ...c, frame: f });
+    }
+  }
+}
+
 export function buildPaintedAtlas(hero: PaintedSheets): { width: number; height: number; rgba: Uint8Array; manifest: SpriteManifest } | null {
   if (!existsSync(hero.dir)) return null;
   const columnGrid = new Map<number, [number, number][]>();
@@ -467,6 +487,7 @@ export function buildPaintedAtlas(hero: PaintedSheets): { width: number; height:
       }
     }
   }
+  fillShortAnims(crops);
 
   const idle = crops.find((c) => c.anim === 'idle' && c.frame === 0 && c.view === 0);
   if (!idle) return null;

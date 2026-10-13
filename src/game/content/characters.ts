@@ -135,14 +135,15 @@ export const ENEMIES: Record<string, EnemyDef> = {
   },
   golem: {
     id: 'golem',
-    name: 'Gólem del risco',
+    name: 'Dinosaurio del risco',
     level: 5,
     baseStats: { maxHp: 700, maxKi: 120, physicalAttack: 17, kiAttack: 11, physicalDefense: 15, kiDefense: 10, speed: 7, technique: 9, criticalRate: 0.05, evasion: 0, stamina: 200 },
     appearance: {
       palette: { skin: 0x8a8a96, hair: 0x5a5a66, outfit: 0x6a6a76, outfitDark: 0x45454f, accent: 0x6af2ff, boots: 0x3a3a44, aura: 0x6af2ff },
       hairStyle: 'stone',
       build: 'huge',
-      scale: 1.45,
+      // El atlas lo deja a la altura de un héroe. Esta escala lo pone al doble que Goku.
+      scale: 2,
     },
     moves: ['light_1', 'light_2', 'heavy_finisher', 'heavy', 'ki_blast', 'meteor_impact', 'ki_wave'],
     aiStyle: 'brute',

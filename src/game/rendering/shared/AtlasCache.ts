@@ -6,6 +6,18 @@ import krillinPng from '../../../../assets/generated/sprites/char_oren_hero.png'
 import krillinManifestJson from '../../../../assets/generated/sprites/char_oren_hero.json';
 import yamchaPng from '../../../../assets/generated/sprites/char_suri_hero.png';
 import yamchaManifestJson from '../../../../assets/generated/sprites/char_suri_hero.json';
+import hokuPng from '../../../../assets/generated/sprites/npc_master_hero.png';
+import hokuManifestJson from '../../../../assets/generated/sprites/npc_master_hero.json';
+import miraPng from '../../../../assets/generated/sprites/npc_villager_hero.png';
+import miraManifestJson from '../../../../assets/generated/sprites/npc_villager_hero.json';
+import bramPng from '../../../../assets/generated/sprites/npc_smith_hero.png';
+import bramManifestJson from '../../../../assets/generated/sprites/npc_smith_hero.json';
+import sproutPng from '../../../../assets/generated/sprites/enemy_sprout_hero.png';
+import sproutManifestJson from '../../../../assets/generated/sprites/enemy_sprout_hero.json';
+import banditPng from '../../../../assets/generated/sprites/enemy_bandit_hero.png';
+import banditManifestJson from '../../../../assets/generated/sprites/enemy_bandit_hero.json';
+import dinoPng from '../../../../assets/generated/sprites/enemy_golem_hero.png';
+import dinoManifestJson from '../../../../assets/generated/sprites/enemy_golem_hero.json';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES } from '../../content/characters';
 import type { AppearanceDef } from '../../content/types';
 import { generateCharacterAtlas } from './characterArt';
@@ -16,6 +28,12 @@ import type { Tex } from './worldArt';
 const gokuManifest = gokuManifestJson as SpriteManifest;
 const krillinManifest = krillinManifestJson as SpriteManifest;
 const yamchaManifest = yamchaManifestJson as SpriteManifest;
+const hokuManifest = hokuManifestJson as SpriteManifest;
+const miraManifest = miraManifestJson as SpriteManifest;
+const bramManifest = bramManifestJson as SpriteManifest;
+const sproutManifest = sproutManifestJson as SpriteManifest;
+const banditManifest = banditManifestJson as SpriteManifest;
+const dinoManifest = dinoManifestJson as SpriteManifest;
 
 export function makeTexture(t: Tex, repeat = false): THREE.DataTexture {
   const tex = new THREE.DataTexture(t.data, t.width, t.height, THREE.RGBAFormat);
@@ -62,6 +80,12 @@ export class AtlasCache {
     void this.loadPainted(AtlasCache.GOKU, gokuPng, gokuManifest, 'Goku');
     void this.loadPainted(AtlasCache.KRILLIN, krillinPng, krillinManifest, 'Krillin');
     void this.loadPainted(AtlasCache.YAMCHA, yamchaPng, yamchaManifest, 'Yamcha');
+    void this.loadPainted('npc:master|hero', hokuPng, hokuManifest, 'Maestro Hoku');
+    void this.loadPainted('npc:villager|hero', miraPng, miraManifest, 'Aldeana Mira');
+    void this.loadPainted('npc:smith|hero', bramPng, bramManifest, 'Herrero Bram');
+    void this.loadPainted('enemy:sprout|hero', sproutPng, sproutManifest, 'Brote salvaje');
+    void this.loadPainted('enemy:bandit|hero', banditPng, banditManifest, 'Bandido del valle');
+    void this.loadPainted('enemy:golem|hero', dinoPng, dinoManifest, 'Dinosaurio del risco');
   }
 
   key(atlasId: string, mode: 'world' | 'battle'): string {
@@ -71,10 +95,10 @@ export class AtlasCache {
   get(atlasId: string, mode: 'world' | 'battle'): Atlas | null {
     const app = appearanceFor(atlasId);
     if (!app) return null;
+    const painted = this.painted.get(`${atlasId}|hero`);
+    if (painted) return painted;
     // Heroes use one detailed atlas for both modes.
     const k = isHeroAppearance(app) ? `${atlasId}|hero` : this.key(atlasId, mode);
-    const painted = this.painted.get(k);
-    if (painted) return painted;
     let a = this.cache.get(k);
     if (a) return a;
     const gen = isHeroAppearance(app) ? generateHeroAtlas(atlasId, app) : generateCharacterAtlas(atlasId, app, mode);
