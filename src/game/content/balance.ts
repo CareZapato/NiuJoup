@@ -113,6 +113,19 @@ export const BALANCE = {
     perHitLanded: 0.6,
     dominancePerSecond: 1.5,
   },
+  /**
+   * One wind for the whole valley. Direction is a unit vector on the ground.
+   * Trees lean that way. The ground stays still.
+   */
+  wind: {
+    turnPerTick: 0.0004,
+    gustSpeed: 0.018,
+    flutterSpeed: 0.09,
+    minStrength: 0.28,
+    maxStrength: 0.85,
+    /** How far a tree top slides, in local units, at full strength. */
+    treeLean: 0.2,
+  },
   exploration: {
     walkSpeed: 4.2,
     runSpeed: 7,
@@ -152,17 +165,18 @@ export const BALANCE = {
   /**
    * Camera framing. `zoomOut` multiplies every gameplay distance (1.15 = 15 %
    * farther than the original framing); the encounter zoom-in is preserved
-   * because exploration and combat distances scale together.
+   * because exploration and combat distances scale together. Exploration stays
+   * close enough that the party reads large while walking.
    */
   camera: {
     zoomOut: 1.15,
-    exploration: { distance: 15, pitch: 1.02, fov: 40 },
+    exploration: { distance: 11, pitch: 0.52, fov: 50 },
     /**
      * Combat stays closer than exploration (`max` × zoomOut < exploration distance)
-     * and keeps a downward angle so the fight does not swing to the horizon.
-     * The look-at point is always the controlled fighter, never the map centre.
+     * and keeps a downward angle. The look-at point is always the controlled
+     * fighter, never the map centre.
      */
-    combat: { base: 6.2, perSpread: 0.45, min: 6.5, max: 10.5, pitch: 0.72, fov: 46 },
+    combat: { base: 6.2, perSpread: 0.45, min: 6.5, max: 10.5, pitch: 0.4, fov: 52 },
   },
   /**
    * Resolution model: the layout is authored against a 1920x1080 reference;

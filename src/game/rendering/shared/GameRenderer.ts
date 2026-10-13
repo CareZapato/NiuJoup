@@ -11,6 +11,9 @@ import { BALANCE } from '../../content/balance';
 import { type Atlas, AtlasCache, appearanceFor, makeTexture } from './AtlasCache';
 import { ANIM_FALLBACK, frameAt, frameRect, pickView } from './manifest';
 import { buildTerrainGeometry, exteriorTreePositions, treePositions, WATER_LEVEL } from './terrainMesh';
+import { loadSheet, ValleyBackdrop } from './valleyBackdrop';
+import groundSheetUrl from '../../../../assets/generated/sprites/Nuevos/Entorno/suelo_lozas.png';
+import treeSheetUrl from '../../../../assets/generated/sprites/Nuevos/Entorno/arboles.png';
 import { DIGIT_ROW_Y, FX, FX_COLS, FX_ROWS, generateEffects, generateForestFloor, generateProps, generateTerrainAtlas, generateTrees, generateWater, PROP_CELLS, VALLEY_PALETTE } from './worldArt';
 
 /**
@@ -86,6 +89,86 @@ function setUv(g: THREE.BufferGeometry, u0: number, v0: number, u1: number, v1: 
   a.needsUpdate = true;
 }
 
+function measureTrees(img: HTMLImageElement): { u0: number; v0: number; u1: number; v1: number; h: number; aspect: number }[] {
+  const fallback = [
+    { u0: 0, v0: 0, u1: 0.25, v1: 1, h: 1, aspect: 0.9 },
+    { u0: 0.25, v0: 0, u1: 0.5, v1: 1, h: 1, aspect: 0.55 },
+    { u0: 0.5, v0: 0, u1: 0.75, v1: 1, h: 0.95, aspect: 1 },
+    { u0: 0.75, v0: 0, u1: 1, v1: 1, h: 0.62, aspect: 0.7 },
+  ];
+  if (typeof document === 'undefined') return fallback;
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return fallback;
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const solid = (x: number, y: number) => {
+    const i = (y * canvas.width + x) * 4;
+    return data[i + 3] > 24 && (data[i] > 36 || data[i + 1] > 36 || data[i + 2] > 36);
+  };
+  const cols: boolean[] = [];
+  for (let x = 0; x < canvas.width; x++) {
+    let on = false;
+    for (let y = 0; y < canvas.height; y += 2) {
+      if (solid(x, y)) {
+        on = true;
+        break;
+      }
+    }
+    cols.push(on);
+  }
+  const runs: { a: number; b: number }[] = [];
+  let start = -1;
+  for (let x = 0; x <= cols.length; x++) {
+    if (x < cols.length && cols[x]) {
+      if (start < 0) start = x;
+    } else if (start >= 0) {
+      if (x - start > 8) runs.push({ a: start, b: x });
+      start = -1;
+    }
+  }
+  const boxes = runs.slice(0, 4).map((run) => {
+    let minX = canvas.width;
+    let minY = canvas.height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = run.a; x < run.b; x++) {
+        if (!solid(x, y)) continue;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return null;
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    return {
+      u0: minX / canvas.width,
+      u1: (maxX + 1) / canvas.width,
+      v1: 1 - minY / canvas.height,
+      v0: 1 - (maxY + 1) / canvas.height,
+      w,
+      h,
+    };
+  }).filter((b): b is NonNullable<typeof b> => b !== null);
+  if (boxes.length === 0) return fallback;
+  const tallest = Math.max(...boxes.map((b) => b.h));
+  const out = boxes.map((b) => ({
+    u0: b.u0,
+    v0: b.v0,
+    u1: b.u1,
+    v1: b.v1,
+    h: b.h / tallest,
+    aspect: b.w / b.h,
+  }));
+  while (out.length < 4) out.push(out[out.length - 1]);
+  return out.slice(0, 4);
+}
+
 interface SpriteView {
   root: THREE.Group;
   mesh: THREE.Mesh;
@@ -132,12 +215,9 @@ export class GameRenderer {
   private projViews = new Map<number, { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; frames: readonly number[] }>();
   private terrain: THREE.Mesh | null = null;
   private water: THREE.Mesh;
-  private waterTex: THREE.DataTexture;
+  private waterTex: THREE.Texture;
   private trees: THREE.InstancedMesh[] = [];
   private treeData: { x: number; z: number; variant: number; size: number }[] = [];
-  private lastTreeYaw = NaN;
-  private lastTreeStretch = NaN;
-  private lastTreeCam = { x: NaN, z: NaN };
   private propsTex: THREE.DataTexture;
   private fxTex: THREE.DataTexture;
   private terrainTex: THREE.DataTexture;
@@ -150,6 +230,7 @@ export class GameRenderer {
   private mapRef: unknown = null;
   private unsub: (() => void)[] = [];
   private tmpMat = new THREE.Matrix4();
+  private tmpShear = new THREE.Matrix4();
   private tmpQ = new THREE.Quaternion();
   private tmpV = new THREE.Vector3();
   private tmpS = new THREE.Vector3();
@@ -163,6 +244,18 @@ export class GameRenderer {
   private beams: Beam[] = [];
   private screenFlash = 0;
   private skyBase = new THREE.Color(VALLEY_PALETTE.sky);
+  private backdrop: ValleyBackdrop;
+  private paintedWater = false;
+  private paintedTrees = false;
+  private groundTex: THREE.Texture | null = null;
+  private treeSheet: THREE.Texture | null = null;
+  /** Tight bounds of the four painted trees, plus height relative to the tallest. */
+  private treeShape: { u0: number; v0: number; u1: number; v1: number; h: number; aspect: number }[] = [
+    { u0: 0, v0: 0, u1: 0.25, v1: 1, h: 1, aspect: 0.9 },
+    { u0: 0.25, v0: 0, u1: 0.5, v1: 1, h: 1, aspect: 0.55 },
+    { u0: 0.5, v0: 0, u1: 0.75, v1: 1, h: 0.95, aspect: 1 },
+    { u0: 0.75, v0: 0, u1: 1, v1: 1, h: 0.62, aspect: 0.7 },
+  ];
   private grey = new THREE.Color();
   private lowQuality: boolean;
 
@@ -200,6 +293,8 @@ export class GameRenderer {
     this.ctlRing.rotation.x = -Math.PI / 2;
     scene.add(this.ctlRing);
     scene.add(this.debugGroup);
+    this.backdrop = new ValleyBackdrop(scene);
+    void this.loadPaintedValley();
 
     for (let i = 0; i < this.maxFx; i++) {
       const mat = patchFocus(fxMat());
@@ -210,6 +305,31 @@ export class GameRenderer {
       this.fxPool.push({ mesh, mat, active: false, frames: 0, age: 0, life: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, size: 1, grow: 0, digit: -1, ground: false });
     }
     this.subscribe();
+  }
+
+  private async loadPaintedValley(): Promise<void> {
+    try {
+      const [ground, trees] = await Promise.all([loadSheet(groundSheetUrl, false), loadSheet(treeSheetUrl, false)]);
+      if (ground) {
+        ground.tex.magFilter = THREE.NearestFilter;
+        ground.tex.minFilter = THREE.NearestFilter;
+        ground.tex.colorSpace = THREE.SRGBColorSpace;
+        ground.tex.needsUpdate = true;
+        this.groundTex = ground.tex;
+        if (this.terrain) {
+          (this.terrain.material as THREE.MeshBasicMaterial).map = ground.tex;
+          this.terrain.geometry.dispose();
+          this.terrain.geometry = buildTerrainGeometry(this.game.map.tiles, true);
+        }
+      }
+      if (trees?.img) {
+        this.treeSheet = trees.tex;
+        this.treeShape = measureTrees(trees.img);
+        this.paintedTrees = false;
+      }
+    } catch (err) {
+      console.warn('No se pudo cargar el suelo y los árboles pintados.', err);
+    }
   }
 
   private buildMap(): void {
@@ -230,8 +350,8 @@ export class GameRenderer {
     }
     const tiles = map.tiles;
     this.terrain = new THREE.Mesh(
-      buildTerrainGeometry(tiles),
-      patchFocus(new THREE.MeshBasicMaterial({ map: this.terrainTex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide })),
+      buildTerrainGeometry(tiles, this.groundTex !== null),
+      patchFocus(new THREE.MeshBasicMaterial({ map: this.groundTex ?? this.terrainTex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide })),
     );
     this.scene.add(this.terrain);
     this.water.scale.set(tiles.width, tiles.height, 1);
@@ -260,18 +380,20 @@ export class GameRenderer {
       return m;
     });
 
+    this.paintedTrees = false;
+    this.backdrop.dressMap(tiles);
     this.treeData = [...treePositions(tiles), ...exteriorTreePositions(tiles, this.lowQuality ? 5 : 7, this.lowQuality ? 1.8 : 1.45)];
-    this.trees = [0, 1].map((variant) => {
+    this.trees = [0, 1, 2, 3].map((variant) => {
       const count = this.treeData.filter((t) => t.variant === variant).length;
       const g = makeQuad();
-      setUv(g, variant * 0.5, 0, variant * 0.5 + 0.5, 1, false);
+      const shape = this.treeShape[variant];
+      setUv(g, shape.u0, shape.v0, shape.u1, shape.v1, false);
       const m = new THREE.InstancedMesh(g, patchFocus(new THREE.MeshBasicMaterial({ map: this.treeTex, alphaTest: 0.5 })), Math.max(1, count));
       m.count = count;
       m.frustumCulled = false;
       this.scene.add(m);
       return m;
     });
-    this.lastTreeYaw = NaN;
   }
 
   /**
@@ -284,25 +406,31 @@ export class GameRenderer {
     const rig = this.game.camera;
     const cx = rig.position.x;
     const cz = rig.position.z;
-    if (Math.abs(yaw - this.lastTreeYaw) < 1e-3 && Math.abs(stretch - this.lastTreeStretch) < 1e-3 && Math.hypot(cx - this.lastTreeCam.x, cz - this.lastTreeCam.z) < 0.2) return;
-    this.lastTreeYaw = yaw;
-    this.lastTreeStretch = stretch;
-    this.lastTreeCam.x = cx;
-    this.lastTreeCam.z = cz;
     const p = rig.pose;
     const camH = Math.max(0.5, rig.position.y - rig.lookAt.y);
     const bottomRay = Math.min(p.pitch + (p.fov * Math.PI) / 360, Math.PI / 2 - 0.02);
     const cut = camH / Math.tan(bottomRay) + BALANCE.render.treeCutaway;
     const fx = -Math.sin(yaw);
     const fz = -Math.cos(yaw);
-    const counters = [0, 0];
+    const wind = this.game.wind;
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
+    const side = wind.dirX * rightX + wind.dirZ * rightZ;
+    const counters = [0, 0, 0, 0];
     this.tmpQ.setFromAxisAngle(this.up, yaw);
     for (const t of this.treeData) {
       const ahead = (t.x - cx) * fx + (t.z - cz) * fz;
       this.tmpV.set(t.x, 0, t.z);
+      const shape = this.treeShape[t.variant] ?? this.treeShape[0];
       if (ahead < cut) this.tmpS.set(0, 0, 0);
-      else this.tmpS.set(2.6 * t.size, 3.4 * t.size * stretch, 1);
-      this.tmpMat.compose(this.tmpV, this.tmpQ, this.tmpS);
+      else {
+        const h = 3.5 * t.size * shape.h * stretch;
+        this.tmpS.set(h * shape.aspect, h, 1);
+      }
+      const gust = Math.sin(this.time * 2.2 + t.x * 0.37 + t.z * 0.21);
+      const lean = BALANCE.wind.treeLean * wind.strength * (0.6 + 0.4 * gust) * side;
+      this.tmpShear.makeShear(lean, 0, 0, 0, 0, 0);
+      this.tmpMat.compose(this.tmpV, this.tmpQ, this.tmpS).multiply(this.tmpShear);
       this.trees[t.variant].setMatrixAt(counters[t.variant]++, this.tmpMat);
     }
     for (const m of this.trees) m.instanceMatrix.needsUpdate = true;
@@ -674,13 +802,35 @@ export class GameRenderer {
       this.camera.updateProjectionMatrix();
     }
     const fog = this.scene.fog as THREE.Fog;
-    fog.near = rig.pose.distance * 1.6;
-    fog.far = rig.pose.distance * 4.5 + 10;
+    fog.near = rig.pose.distance * 2.2;
+    fog.far = rig.pose.distance * 8 + 36;
 
     const camYaw = rig.pose.yaw;
     const stretch = 1 / Math.max(Math.cos(rig.pose.pitch), 0.5);
     this.updateTrees(camYaw, stretch);
-    this.waterTex.offset.set(this.time * 0.05, this.time * 0.03);
+    if (!this.paintedWater) {
+      const painted = this.backdrop.takeWater();
+      if (painted) {
+        painted.repeat.copy(this.waterTex.repeat);
+        (this.water.material as THREE.MeshBasicMaterial).map = painted;
+        this.waterTex.dispose();
+        this.waterTex = painted;
+        this.paintedWater = true;
+      }
+    }
+    if (!this.paintedTrees && this.treeSheet && this.trees.length > 0) {
+      this.trees.forEach((mesh, variant) => {
+        const mat = mesh.material as THREE.MeshBasicMaterial;
+        const shape = this.treeShape[variant];
+        mat.map = this.treeSheet;
+        mat.alphaTest = 0.45;
+        mat.needsUpdate = true;
+        if (shape) setUv(mesh.geometry, shape.u0, shape.v0, shape.u1, shape.v1, false);
+      });
+      this.paintedTrees = true;
+    }
+    this.waterTex.offset.set(this.time * 0.012, this.time * 0.008);
+    this.backdrop.update(this.camera.position.x, this.camera.position.z, rig.lookAt.x + ox, rig.lookAt.z + oz, camYaw, this.time, g.settings.reducedMotion);
 
     const battle = BATTLE_STATES.has(g.fsm.state) || (g.fsm.state === 'PAUSED' && BATTLE_STATES.has(g.fsm.previous));
     const seen = new Set<number>();
@@ -888,11 +1038,14 @@ export class GameRenderer {
     for (const id of [...this.views.keys()]) this.removeView(id);
     this.atlases.dispose();
     this.terrainTex.dispose();
+    this.groundTex?.dispose();
     this.treeTex.dispose();
+    this.treeSheet?.dispose();
     this.propsTex.dispose();
     this.fxTex.dispose();
     this.waterTex.dispose();
     this.floorTex.dispose();
+    this.backdrop.dispose();
     for (const m of this.exterior) m.geometry.dispose();
     for (const b of this.beams) for (const m of [b.mesh, b.head]) m.geometry.dispose();
     this.beams = [];

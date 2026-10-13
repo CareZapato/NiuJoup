@@ -21,6 +21,7 @@ export const CHARACTERS: Record<string, CharacterDef> = {
       palette: { skin: 0xf6c49a, hair: 0x14121a, outfit: 0xf07a1e, outfitDark: 0xb8500e, accent: 0x2346a8, boots: 0x1f3a8c, aura: 0xfff07a },
       hairStyle: 'goku',
       build: 'normal',
+      // 175 cm de referencia. Krillin y Yamcha se apartan de esta escala.
       scale: 1,
       hero: 'goku',
     },
@@ -45,7 +46,8 @@ export const CHARACTERS: Record<string, CharacterDef> = {
       palette: { skin: 0xf3c29c, hair: 0x000000, outfit: 0xf07a1e, outfitDark: 0xb8500e, accent: 0x2346a8, boots: 0x1f3a8c, aura: 0xfff4c0 },
       hairStyle: 'krillin',
       build: 'short',
-      scale: 0.86,
+      // 153 cm. Más bajo que el 87% real: con la cabeza grande, si no, se confunde con Goku.
+      scale: 0.76,
       hero: 'krillin',
     },
     innateMoves: BASIC_MOVES,
@@ -69,7 +71,8 @@ export const CHARACTERS: Record<string, CharacterDef> = {
       palette: { skin: 0xeab48c, hair: 0x14121a, outfit: 0xf07a1e, outfitDark: 0xb8500e, accent: 0x2346a8, boots: 0x1f3a8c, aura: 0xc8f0ff },
       hairStyle: 'yamcha',
       build: 'normal',
-      scale: 1.02,
+      // 183 cm. Un poco más alto que Goku, sin dejar de ser el mismo tipo de sprite.
+      scale: 1.12,
       hero: 'yamcha',
     },
     innateMoves: BASIC_MOVES,

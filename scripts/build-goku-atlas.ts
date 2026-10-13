@@ -451,6 +451,9 @@ export function buildPaintedAtlas(hero: PaintedSheets): { width: number; height:
   if (!crops.some((c) => c.anim === 'walk' && c.frame === 3)) {
     for (const c of crops.filter((c) => c.anim === 'walk' && c.frame === 1)) crops.push({ ...c, frame: 3 });
   }
+  if (!crops.some((c) => c.anim === 'run' && c.frame === 3)) {
+    for (const c of crops.filter((c) => c.anim === 'run' && c.frame === 1)) crops.push({ ...c, frame: 3 });
+  }
   for (const [dest, src] of Object.entries(hero.copies)) {
     const source = crops.filter((c) => c.anim === src);
     const frames = HERO_ANIMS[dest as keyof typeof HERO_ANIMS]?.frames ?? 0;

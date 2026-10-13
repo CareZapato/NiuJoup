@@ -10,12 +10,16 @@ Los tres personajes jugables usan un generador específico y más detallado (`re
 - **Animaciones**: idle, idle_wait, walk, run, jump, fall, interact, pickup, hit, knockback, defeat, victory, stance, dash, dodge, hover, fly, guard, charge, punch, kick, kiblast, special y confused. A ellas se suman las poses de técnica `tech_kamehameha`, `tech_kienzan`, `tech_taiyoken`, `tech_sokidan`, `tech_wolf_fang`, `tech_kaioken`, `tech_barrage` y `tech_teleport`.
 - **Poses de técnica**: tres frames (preparación, liberación y recuperación) con el evento `release` en el frame 1. En juego, `AnimationSystem.techniquePhase` elige el frame a partir del frame data de la técnica: la liberación coincide con el tick en que sale el proyectil, el rayo o el impacto. Los proyectiles nacen en la simulación, no en la animación.
 - **Rasgos distintivos**: pelo en punta de Goku, Krillin calvo con seis puntos en la frente y más bajo (piernas ×0,8), pelo largo de Yamcha con cicatrices. Los tres llevan gi naranja con camiseta, muñequeras y botas azules, y el símbolo de la escuela en el pecho y, más grande, en la espalda.
-- **Filtrado**: magnificación nearest. Los atlas pintados de Goku y Krillin también usan minificación nearest. Yamcha, todavía procedural, sigue con minificación lineal para no parpadear al dibujarse más pequeño.
+- **Filtrado**: magnificación nearest. Los atlas pintados de Goku, Krillin y Yamcha también usan minificación nearest.
 - **Nombres**: `char_<id>_hero`. El validador exige 64×96, las animaciones de `HERO_ANIMS` y el evento `release` en todas las técnicas, y avisa si el ancho supera 2048 px.
 
-> **Honestidad sobre el arte**: Yamcha sigue siendo un placeholder procedural. Goku y Krillin usan las hojas pintadas de `assets/generated/sprites/Nuevos/Goku/` (`scripts/build-goku-atlas.ts` y `scripts/build-krillin-atlas.ts`), empaquetadas en `char_kaien_hero.png` y `char_oren_hero.png`. El fondo de esas hojas es alfa real, no un color clave. El juego las carga con `expo-asset` y, hasta que llegan, muestra el procedural. `npm run assets:export` no borra la carpeta `Nuevos`. Krillin no tiene hojas de Kaioken, Sokidan, Colmillo de Lobo, ráfaga ni teletransporte: esas celdas repiten la pose más cercana para que el atlas compartido siga siendo válido.
+> **Honestidad sobre el arte**: Goku, Krillin y Yamcha usan las hojas pintadas de `assets/generated/sprites/Nuevos/Goku/` (`scripts/build-goku-atlas.ts`, `scripts/build-krillin-atlas.ts`, `scripts/build-yamcha-atlas.ts`), empaquetadas en `char_kaien_hero.png`, `char_oren_hero.png` y `char_suri_hero.png`. El fondo de esas hojas es alfa real, no un color clave. El juego las carga con `expo-asset` y, hasta que llegan, muestra el procedural. `npm run assets:export` no borra la carpeta `Nuevos`. Las técnicas sin hoja propia repiten la pose más cercana para que el atlas compartido siga siendo válido. Yamcha tiene Colmillo de Lobo y Sokidan pintados; su Kamehameha de juego todavía usa la pose especial.
 
-Estado del validador: 15 atlas, 0 errores, 11 avisos. Goku y Krillin salen limpios. Los avisos que quedan son de Yamcha, todavía procedural: pies despegados en la carrera (rebote) y 6 frames de perfil que tocan el borde.
+Estado del validador: 15 atlas, 0 errores, 0 avisos. Los tres héroes pintados salen limpios.
+
+## Horizonte del valle
+
+El cielo, las montañas y las colinas son planos que siguen a la cámara a distinta velocidad; las nubes se desplazan y las colinas se mecen un poco. El agua del río recorta el panel de agua de `suelo.png`. Las casas, la valla, la roca y el puente salen de `fachadas.png`. El suelo caminable es `suelo_lozas.png` (8×4). Las caras de risco son `riscos.png` (8×2). Los árboles son las cuatro siluetas de `arboles.png`.
 
 ## Modelo de resolución
 
@@ -107,4 +111,4 @@ Estado de los atlas antiguos (`world`/`battle`): 0 errores y 0 avisos. En la pri
 2. Guarda `assets/sprites/<nombre>.png` y su `<nombre>.json` (puedes copiar el JSON generado y ajustar `anims` si añades frames; `columns` y `totalColumns` deben ser coherentes).
 3. Ejecuta `npm run assets:validate`.
 
-Goku y Krillin cargan su PNG en tiempo de ejecución (`AtlasCache`, textura nearest, `flipY` activo). Yamcha sigue generándose en memoria hasta que existan sus hojas.
+Goku, Krillin y Yamcha cargan su PNG en tiempo de ejecución (`AtlasCache`, textura nearest, `flipY` activo).

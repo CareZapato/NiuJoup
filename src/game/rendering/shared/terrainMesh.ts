@@ -6,8 +6,61 @@ import { ATLAS_COLS, ATLAS_ROWS, TILE_INDEX } from './worldArt';
 
 export const WATER_LEVEL = -0.25;
 
-function topTile(c: TileChar, x: number, z: number): number {
+/** Dirt-path cells in suelo_lozas.png, edges listed north, east, south, west. G = grass, D = dirt. */
+const PATH_CELLS: { n: 'G' | 'D'; e: 'G' | 'D'; s: 'G' | 'D'; w: 'G' | 'D'; id: number }[] = [
+  { n: 'D', e: 'D', s: 'D', w: 'D', id: 16 },
+  { n: 'G', e: 'D', s: 'D', w: 'D', id: 17 },
+  { n: 'D', e: 'G', s: 'D', w: 'D', id: 18 },
+  { n: 'D', e: 'D', s: 'G', w: 'D', id: 19 },
+  { n: 'D', e: 'D', s: 'D', w: 'G', id: 20 },
+  { n: 'G', e: 'D', s: 'D', w: 'G', id: 21 },
+  { n: 'G', e: 'G', s: 'D', w: 'D', id: 22 },
+  { n: 'D', e: 'G', s: 'G', w: 'D', id: 23 },
+];
+
+function pathCell(map: TileMap, x: number, z: number): number {
+  const edge = (dx: number, dz: number): 'G' | 'D' => {
+    const n = map.charAt(x + dx, z + dz);
+    return n === ':' || n === '=' ? 'D' : 'G';
+  };
+  const want = { n: edge(0, -1), e: edge(1, 0), s: edge(0, 1), w: edge(-1, 0) };
+  let best = 16;
+  let score = -1;
+  for (const cell of PATH_CELLS) {
+    let s = 0;
+    if (cell.n === want.n) s++;
+    if (cell.e === want.e) s++;
+    if (cell.s === want.s) s++;
+    if (cell.w === want.w) s++;
+    if (s > score) {
+      score = s;
+      best = cell.id;
+    }
+  }
+  return best;
+}
+
+function topTile(map: TileMap, c: TileChar, x: number, z: number, painted: boolean): number {
   const h = hash2(x, z);
+  if (painted) {
+    const grass = Math.floor(h * 4);
+    const flowers = 4 + Math.floor(hash2(x + 3, z + 9) * 4);
+    switch (c) {
+      case ',':
+        return flowers;
+      case ':':
+        return pathCell(map, x, z);
+      case 'G':
+        return 30;
+      case '=':
+        return 25;
+      case 'P':
+      case 's':
+        return 31;
+      default:
+        return grass;
+    }
+  }
   switch (c) {
     case ',':
       return TILE_INDEX.flowers;
@@ -59,7 +112,7 @@ function renderHeight(map: TileMap, x: number, z: number): number {
   const c = map.charAt(x, z);
   const d = TILES[c];
   if (d.liquid) return WATER_LEVEL;
-  if (d.render === 'tree' || c === 'F' || c === '=') return 0;
+  if (d.render === 'tree' || c === 'F' || c === '=' || c === 'H' || c === 'o') return 0;
   return d.height;
 }
 
@@ -67,7 +120,7 @@ function renderHeight(map: TileMap, x: number, z: number): number {
  * Builds the whole map (ground, plateaus, cliffs, houses, fences) as ONE mesh
  * with one atlas texture: a single draw call, cheap on mobile GPUs.
  */
-export function buildTerrainGeometry(map: TileMap): THREE.BufferGeometry {
+export function buildTerrainGeometry(map: TileMap, painted = false): THREE.BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
   const col: number[] = [];
@@ -112,28 +165,9 @@ export function buildTerrainGeometry(map: TileMap): THREE.BufferGeometry {
             [x, h, z + 1],
             [x + 1, h, z + 1],
           ],
-          topTile(c, x, z),
+          topTile(map, c, x, z, painted),
           1,
         );
-      }
-      if (c === 'F') {
-        const alongX = map.charAt(x - 1, z) === 'F' || map.charAt(x + 1, z) === 'F';
-        const fh = TILES.F.height;
-        const p = alongX
-          ? [
-              [x, fh, z + 0.5],
-              [x + 1, fh, z + 0.5],
-              [x, 0, z + 0.5],
-              [x + 1, 0, z + 0.5],
-            ]
-          : [
-              [x + 0.5, fh, z],
-              [x + 0.5, fh, z + 1],
-              [x + 0.5, 0, z],
-              [x + 0.5, 0, z + 1],
-            ];
-        quad(p, TILE_INDEX.fenceSide, 0.95);
-        quad([p[1], p[0], p[3], p[2]], TILE_INDEX.fenceSide, 0.8);
       }
       // Side faces toward lower neighbours, split per unit of height so the texture tiles.
       const sides: [number, number, number][] = [
@@ -145,7 +179,8 @@ export function buildTerrainGeometry(map: TileMap): THREE.BufferGeometry {
       for (const [dx, dz, light] of sides) {
         const nh = renderHeight(map, x + dx, z + dz);
         if (nh >= h) continue;
-        const tile = TILES[c].liquid ? TILE_INDEX.path[0] : h <= 0 ? TILE_INDEX.path[1] : sideTile(c);
+        if (painted && (c === '^' || c === 'P')) continue;
+        const tile = painted ? (c === 's' ? 31 : 25) : TILES[c].liquid ? TILE_INDEX.path[0] : h <= 0 ? TILE_INDEX.path[1] : sideTile(c);
         let y0 = nh;
         while (y0 < h - 1e-4) {
           const y1 = Math.min(h, Math.floor(y0 + 1 + 1e-4));
@@ -211,7 +246,7 @@ export function exteriorTreePositions(map: TileMap, band: number, spacing: numbe
       out.push({
         x: x + (h - 0.5) * spacing * 0.7,
         z: z + (hash2(Math.round(z * 5), Math.round(x * 5)) - 0.5) * spacing * 0.7,
-        variant: h < 0.5 ? 0 : 1,
+        variant: Math.floor(h * 4) % 4,
         size: 1.2 + h * 0.35 + out1 * 0.06,
       });
     }
@@ -226,7 +261,7 @@ export function treePositions(map: TileMap): { x: number; z: number; variant: nu
       const c = map.charAt(x, z);
       if (c !== 'T' && c !== '#') continue;
       const h = hash2(x + 7, z + 3);
-      out.push({ x: x + 0.5 + (h - 0.5) * 0.3, z: z + 0.5 + (hash2(z, x) - 0.5) * 0.3, variant: h < 0.5 ? 0 : 1, size: c === '#' ? 1.15 + h * 0.3 : 0.95 + h * 0.25 });
+      out.push({ x: x + 0.5 + (h - 0.5) * 0.3, z: z + 0.5 + (hash2(z, x) - 0.5) * 0.3, variant: Math.floor(hash2(x + 1, z + 5) * 4) % 4, size: c === '#' ? 1.15 + h * 0.3 : 0.95 + h * 0.25 });
     }
   return out;
 }

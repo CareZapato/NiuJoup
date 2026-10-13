@@ -7,6 +7,7 @@ import { basename, join, resolve } from 'node:path';
 import { PNG } from 'pngjs';
 import { buildGokuAtlas } from './build-goku-atlas';
 import { buildKrillinAtlas } from './build-krillin-atlas';
+import { buildYamchaAtlas } from './build-yamcha-atlas';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES } from '../src/game/content/characters';
 import type { AppearanceDef } from '../src/game/content/types';
 import { type AssetIssue, toTopDown, validateAtlas } from '../src/game/rendering/shared/assetValidation';
@@ -38,8 +39,8 @@ function exportAll(): void {
     rmSync(path);
   }
   for (const [kind, id, app] of sources) {
-    if (isHeroAppearance(app) && (app.hero === 'goku' || app.hero === 'krillin')) {
-      const painted = app.hero === 'goku' ? buildGokuAtlas() : buildKrillinAtlas();
+    if (isHeroAppearance(app) && (app.hero === 'goku' || app.hero === 'krillin' || app.hero === 'yamcha')) {
+      const painted = app.hero === 'goku' ? buildGokuAtlas() : app.hero === 'krillin' ? buildKrillinAtlas() : buildYamchaAtlas();
       if (painted) {
         const name = `${kind}_${id}_hero`;
         const png = new PNG({ width: painted.width, height: painted.height });

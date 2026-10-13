@@ -14,8 +14,15 @@ export const POSE_ANIM: Record<TechniquePose, AnimId> = {
   scatter: 'tech_barrage',
 };
 
-/** Exploration idle lasting this long switches to the waiting idle. */
-const IDLE_WAIT_TICKS = 240;
+/** Base idle lasts 8–20 s (per entity) before the waiting pose, which then plays for 4 s. */
+const IDLE_WAIT_MIN = 60 * 8;
+const IDLE_WAIT_SPAN = 60 * 12;
+const IDLE_FIDGET_TICKS = 60 * 4;
+
+function idleWaitDelay(id: number): number {
+  const h = Math.imul(id ^ 0x9e3779b9, 0x85ebca6b) >>> 0;
+  return IDLE_WAIT_MIN + (h % IDLE_WAIT_SPAN);
+}
 
 /**
  * Derives the visual animation from simulation state. Gameplay never reads
@@ -103,7 +110,8 @@ export function updateAnimations(list: readonly Entity[], inCombat: boolean, vic
       if (s.oneShot.ticks-- > 0 && (next === 'idle' || next === 'walk')) next = s.oneShot.anim;
       else s.oneShot = null;
     }
-    if (next === 'idle' && ((s.anim === 'idle' && s.animTicks > IDLE_WAIT_TICKS) || s.anim === 'idle_wait')) next = 'idle_wait';
+    if (next === 'idle' && s.anim === 'idle_wait' && s.animTicks < IDLE_FIDGET_TICKS) next = 'idle_wait';
+    else if (next === 'idle' && s.anim === 'idle' && s.animTicks > idleWaitDelay(e.id)) next = 'idle_wait';
     if (next !== s.anim) {
       s.anim = next;
       s.animTicks = 0;

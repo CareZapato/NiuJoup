@@ -4,6 +4,8 @@ import gokuPng from '../../../../assets/generated/sprites/char_kaien_hero.png';
 import gokuManifestJson from '../../../../assets/generated/sprites/char_kaien_hero.json';
 import krillinPng from '../../../../assets/generated/sprites/char_oren_hero.png';
 import krillinManifestJson from '../../../../assets/generated/sprites/char_oren_hero.json';
+import yamchaPng from '../../../../assets/generated/sprites/char_suri_hero.png';
+import yamchaManifestJson from '../../../../assets/generated/sprites/char_suri_hero.json';
 import { CHARACTERS, ENEMIES, NPC_APPEARANCES } from '../../content/characters';
 import type { AppearanceDef } from '../../content/types';
 import { generateCharacterAtlas } from './characterArt';
@@ -13,6 +15,7 @@ import type { Tex } from './worldArt';
 
 const gokuManifest = gokuManifestJson as SpriteManifest;
 const krillinManifest = krillinManifestJson as SpriteManifest;
+const yamchaManifest = yamchaManifestJson as SpriteManifest;
 
 export function makeTexture(t: Tex, repeat = false): THREE.DataTexture {
   const tex = new THREE.DataTexture(t.data, t.width, t.height, THREE.RGBAFormat);
@@ -53,10 +56,12 @@ export class AtlasCache {
   private disposed = false;
   private static readonly GOKU = 'char:kaien|hero';
   private static readonly KRILLIN = 'char:oren|hero';
+  private static readonly YAMCHA = 'char:suri|hero';
 
   constructor() {
     void this.loadPainted(AtlasCache.GOKU, gokuPng, gokuManifest, 'Goku');
     void this.loadPainted(AtlasCache.KRILLIN, krillinPng, krillinManifest, 'Krillin');
+    void this.loadPainted(AtlasCache.YAMCHA, yamchaPng, yamchaManifest, 'Yamcha');
   }
 
   key(atlasId: string, mode: 'world' | 'battle'): string {
@@ -112,7 +117,7 @@ export class AtlasCache {
     this.painted.clear();
   }
 
-  /** Painted hero sheet. Yamcha stays procedural until his sheets exist. */
+  /** Painted hero sheet. Until the PNG loads, the procedural atlas stays on screen. */
   private async loadPainted(key: string, moduleId: number, manifest: SpriteManifest, name: string): Promise<void> {
     try {
       const asset = Asset.fromModule(moduleId);

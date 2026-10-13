@@ -18,6 +18,7 @@ import { DEFAULT_SETTINGS, type BindAction, type Settings, SLOT_ACTIONS } from '
 import { CombatAI } from './systems/ai/CombatAI';
 import { ExplorerAI } from './systems/ai/ExplorerAI';
 import { POSE_ANIM, updateAnimations } from './systems/animation/AnimationSystem';
+import { createWind, stepWind, type WindState } from './systems/world/Wind';
 import { CameraRig, type CameraPose, makePose, screenToWorld, worldToScreen, yawForScreenRight } from './systems/camera/CameraRig';
 import { type Arena, canAct, type CombatContext, CombatSystem, techniqueBlocker } from './systems/combat/CombatSystem';
 import { chargeKi, penalizeKi, regenKi, spendKi } from './systems/combat/ki';
@@ -256,6 +257,8 @@ export class Game {
   rng = new Rng(20261011);
   map: MapDef = buildValley();
   settings: Settings = { ...DEFAULT_SETTINGS, bindings: { ...DEFAULT_SETTINGS.bindings } };
+  /** Valley wind. Trees lean with it. */
+  readonly wind: WindState = createWind();
 
   roster: Record<string, PartyMember> = {};
   partyOrder: string[] = [];
@@ -467,7 +470,7 @@ export class Game {
         stableId: `hero_${id}`,
         kind: 'hero',
         transform: { pos: vec3(x, map.tiles.heightAt(x, z), z), prev: vec3(x, 0, z), yaw: 0 },
-        body: { vel: vec3(), radius: 0.32, height: 1.5 * def.appearance.scale, grounded: true, flying: false },
+        body: { vel: vec3(), radius: 0.32 * def.appearance.scale, height: 1.5 * def.appearance.scale, grounded: true, flying: false },
         sprite: sprite(`char:${id}`, def.appearance.scale),
         appearance: def.appearance,
         hero: { characterId: id, partyIndex: i },
@@ -581,6 +584,7 @@ export class Game {
   }
 
   private step(tick: number): void {
+    stepWind(this.wind, tick, this.settings.reducedMotion);
     this.sampleInput();
     const s = this.fsm.state;
     if (this.focus.active && (s !== 'ACTIVE_COMBAT' || !this.focusCasterValid())) this.endFocus(this.focus.cancel());
@@ -1634,9 +1638,9 @@ export class Game {
     out.focus.y = 0;
     out.focus.z = 16;
     out.yaw = this.settings.reducedMotion ? 0.4 : tick * 0.0015;
-    out.pitch = 0.62;
-    out.distance = 24;
-    out.fov = 45;
+    out.pitch = 0.48;
+    out.distance = 22;
+    out.fov = 68;
     return out;
   }
 
@@ -1847,7 +1851,7 @@ export class Game {
         stableId: `hero_${id}`,
         kind: 'hero',
         transform: { pos: vec3(leader.x - i * 0.5, leader.y, leader.z + i * 0.5), prev: vec3(leader.x, leader.y, leader.z), yaw: 0 },
-        body: { vel: vec3(), radius: 0.32, height: 1.5 * def.appearance.scale, grounded: true, flying: false },
+        body: { vel: vec3(), radius: 0.32 * def.appearance.scale, height: 1.5 * def.appearance.scale, grounded: true, flying: false },
         sprite: sprite(`char:${id}`, def.appearance.scale),
         appearance: def.appearance,
         hero: { characterId: id, partyIndex: i },

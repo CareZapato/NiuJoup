@@ -185,7 +185,7 @@ Está implementado con comportamiento real y cubierto por tests unitarios o de f
 
 ## Pendiente
 
-- **Sprites pintados de Yamcha**. Goku y Krillin cargan `char_kaien_hero.png` y `char_oren_hero.png`. El recorte usa el alfa real y, en cada celda, se queda con el personaje y descarta el trozo del frame vecino. En el atlas de Goku el único frame con píxeles sueltos es el teletransporte a medias, que es el efecto de disolución. Krillin no tiene restos sueltos. Falta reiniciar Metro y mirarlo en partida. Las técnicas que Krillin no tiene dibujadas (Kaioken, Sokidan, Colmillo de Lobo, ráfaga, teletransporte) repiten otra pose.
+- **Cinemáticas de límite y ataque en equipo**. Los tres héroes ya cargan atlas pintados. El horizonte pintado se dibuja detrás del valle. La hoja de fachadas viste la cápsula (cilindro y cúpula), el dojo (caja) y la casa redonda (cilindro y cono); las rocas, las vallas y el puente usan el resto de esa hoja. El suelo caminable sale de `suelo_lozas.png` (pasto, flores, camino con bordes, madera, arena y piedra). Las caras de risco y meseta salen de `riscos.png` (16 variantes). El bosque usa las cuatro siluetas de `arboles.png`, cada una a su altura. El valle tiene un viento compartido: los árboles se inclinan hacia él. El suelo no se ondula. El recorte del árbol ignora la columna negra del borde. La cámara de caminar está más cerca. El idle de espera tarda entre 8 y 20 s y no coincide entre personajes. Yamcha no trae Kamehameha propio: esa celda usa la pose especial. La carrera de su hoja 04 solo tiene tres pasos; el cuarto repite el segundo. Falta reiniciar Metro para ver los PNG.
 - **Audio**: no implementado. Las animaciones ya emiten eventos (`footstep`, `impact`, `release`) a los que conectarlo.
 - **QA en dispositivos** Android e iOS reales (expo-gl, rendimiento, táctil, segundo plano).
 - Smoke tests de navegador para los flujos de las fases 2 y 3 enumerados arriba.
@@ -226,5 +226,5 @@ Están detalladas en ARCHITECTURE.md:
 
 1. Smoke tests de navegador para el 3 contra 3, el cambio de personaje, el Meteo Attack y el gólem.
 2. Ajuste de balance a partir de esas partidas.
-3. Hojas pintadas de Yamcha, con el mismo recorte que Goku y Krillin.
+3. Perspectiva del valle, parallax y cinemáticas de límite y ataque en equipo.
 4. Primera prueba en un dispositivo Android con Expo Go, para cerrar el criterio 17.
