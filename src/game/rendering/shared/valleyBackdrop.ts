@@ -56,9 +56,15 @@ export async function loadSheet(moduleId: number, repeat: boolean): Promise<{ te
 
 interface Layer {
   mesh: THREE.Mesh;
+  /** Sky sheets sit in front of the camera. World sheets stay on the valley. */
+  sky: boolean;
+  /** For the sky, how far in front of the look-at point. For the land, unused. */
   distance: number;
-  /** 1 = glued to the camera, 0 = glued to the world. */
-  follow: number;
+  /** 0 sticks to the anchor, 1 sticks to the camera. */
+  parallax: number;
+  anchorX: number;
+  anchorZ: number;
+  yaw: number;
   drift: number;
 }
 
@@ -68,8 +74,9 @@ interface Dressing {
 }
 
 /**
- * Painted horizon behind the valley. The layers lag the camera at different
- * rates, the clouds scroll, and the near hills breathe. Nothing here collides.
+ * Painted horizon around the valley. Hills and mountains stay on the land, with
+ * only a small shift when the camera moves. The sky stays in front of the view.
+ * Nothing here collides.
  */
 export class ValleyBackdrop {
   private layers: Layer[] = [];
@@ -135,11 +142,16 @@ export class ValleyBackdrop {
     const fx = -Math.sin(yaw);
     const fz = -Math.cos(yaw);
     for (const layer of this.layers) {
-      const ax = focusX * layer.follow + camX * (1 - layer.follow);
-      const az = focusZ * layer.follow + camZ * (1 - layer.follow);
-      const sway = layer.distance < 50 ? Math.sin(time * 0.45 + layer.distance) * 0.35 * pace : 0;
-      layer.mesh.position.set(ax + fx * layer.distance + Math.cos(yaw) * sway, layer.mesh.position.y, az + fz * layer.distance - Math.sin(yaw) * sway);
-      layer.mesh.rotation.y = yaw;
+      if (layer.sky) {
+        const ax = focusX + (camX - focusX) * layer.parallax;
+        const az = focusZ + (camZ - focusZ) * layer.parallax;
+        layer.mesh.position.set(ax + fx * layer.distance, layer.mesh.position.y, az + fz * layer.distance);
+        layer.mesh.rotation.y = yaw;
+      } else {
+        layer.mesh.position.x = layer.anchorX + (camX - layer.anchorX) * layer.parallax;
+        layer.mesh.position.z = layer.anchorZ + (camZ - layer.anchorZ) * layer.parallax;
+        layer.mesh.rotation.y = layer.yaw;
+      }
       const map = layer.mesh.material instanceof THREE.MeshBasicMaterial ? layer.mesh.material.map : null;
       if (map && layer.drift) map.offset.x = time * layer.drift * pace;
     }
@@ -153,11 +165,15 @@ export class ValleyBackdrop {
 
   dispose(): void {
     this.disposed = true;
+    const dumped = new Set<THREE.Texture>();
     for (const layer of this.layers) {
       this.scene.remove(layer.mesh);
       layer.mesh.geometry.dispose();
       const mat = layer.mesh.material as THREE.MeshBasicMaterial;
-      mat.map?.dispose();
+      if (mat.map && !dumped.has(mat.map)) {
+        dumped.add(mat.map);
+        mat.map.dispose();
+      }
       mat.dispose();
     }
     for (const item of this.dressing) {
@@ -200,9 +216,9 @@ export class ValleyBackdrop {
         return;
       }
       if (cliffs) this.cliffTex = cliffs.tex;
-      if (sky) this.addLayer(sky.tex, 42, 0.98, 160, 28, 0.4, -30, 0.006, false);
-      if (mountains) this.addLayer(mountains.tex, 34, 0.84, 130, 14, 0, -20, 0.001, true);
-      if (hills) this.addLayer(hills.tex, 26, 0.58, 110, 12, 0, -10, 0, true);
+      if (sky) this.addSky(sky.tex, 48, 0.12, 180, 32, 8, -30, 0.004);
+      if (mountains) this.addRing(mountains.tex, 0.04, 190, 150, 16, 5.5, -18, 16, 0);
+      if (hills) this.addRing(hills.tex, 0.1, 160, 120, 11, 0, -12, 8, 0);
       if (props) {
         this.propsTex = props.tex;
         this.propsImg = props.img;
@@ -215,23 +231,51 @@ export class ValleyBackdrop {
     }
   }
 
-  private addLayer(map: THREE.Texture, distance: number, follow: number, width: number, height: number, baseY: number, order: number, drift: number, transparent: boolean): void {
+  private addSky(map: THREE.Texture, distance: number, parallax: number, width: number, height: number, baseY: number, order: number, drift: number): void {
+    const mesh = this.makeSheet(map, width, height, baseY, order, false);
+    mesh.frustumCulled = false;
+    this.layers.push({ mesh, sky: true, distance, parallax, anchorX: 0, anchorZ: 0, yaw: 0, drift });
+  }
+
+  /**
+   * Four sheets around the 64×48 valley, facing inward. Outer rings sit farther
+   * out so the menu orbit stays inside them.
+   */
+  private addRing(map: THREE.Texture, parallax: number, spanX: number, spanZ: number, height: number, baseY: number, order: number, inset: number, drift: number): void {
+    const north = -inset;
+    const south = 48 + inset;
+    const west = -inset;
+    const east = 64 + inset;
+    const sides: [number, number, number, number][] = [
+      [32, north, 0, spanX],
+      [32, south, Math.PI, spanX],
+      [west, 24, Math.PI / 2, spanZ],
+      [east, 24, -Math.PI / 2, spanZ],
+    ];
+    for (const [x, z, yaw, span] of sides) {
+      const mesh = this.makeSheet(map, span, height, baseY, order, true);
+      mesh.position.set(x, baseY, z);
+      mesh.rotation.y = yaw;
+      this.layers.push({ mesh, sky: false, distance: 0, parallax, anchorX: x, anchorZ: z, yaw, drift });
+    }
+  }
+
+  private makeSheet(map: THREE.Texture, width: number, height: number, baseY: number, order: number, depth: boolean): THREE.Mesh {
     const mat = new THREE.MeshBasicMaterial({
       map,
-      // Opaque pass, drawn before the valley. The world then covers these pixels.
       transparent: false,
-      alphaTest: transparent ? 0.35 : 0,
-      depthWrite: false,
-      depthTest: false,
+      alphaTest: depth ? 0.35 : 0,
+      depthWrite: depth,
+      depthTest: depth,
       fog: false,
     });
     const mesh = new THREE.Mesh(horizonQuad(), mat);
     mesh.scale.set(width, height, 1);
     mesh.position.y = baseY;
     mesh.renderOrder = order;
-    mesh.frustumCulled = false;
+    mesh.frustumCulled = depth;
     this.scene.add(mesh);
-    this.layers.push({ mesh, distance, follow, drift });
+    return mesh;
   }
 
   private rebuild(): void {
@@ -394,7 +438,7 @@ export class ValleyBackdrop {
     for (let z = 0; z < tiles.height; z++) {
       for (let x = 0; x < tiles.width; x++) {
         if (tiles.charAt(x, z) !== 'o') continue;
-        p.set(x + 0.5, 0.39, z + 0.5);
+        p.set(x + 0.5, tiles.surfaceAt(x, z) + 0.39, z + 0.5);
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ((x * 13 + z * 7) % 10) * 0.2);
         s.set(0.85 + (x % 3) * 0.12, 0.9, 0.85 + (z % 3) * 0.1);
         m.compose(p, q, s);

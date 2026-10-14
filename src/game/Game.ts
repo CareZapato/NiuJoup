@@ -1672,7 +1672,7 @@ export class Game {
   /** Attract-mode orbit over the village behind the main menu. */
   private menuPose(out: CameraPose, tick: number): CameraPose {
     out.focus.x = 22;
-    out.focus.y = 0;
+    out.focus.y = this.map.tiles.surfaceAt(22, 16);
     out.focus.z = 16;
     out.yaw = this.settings.reducedMotion ? 0.4 : tick * 0.0015;
     out.pitch = 0.48;

@@ -730,20 +730,22 @@ export class GameRenderer {
       new THREE.CylinderGeometry(0.08, 0.1, 1.7, 6),
       new THREE.MeshBasicMaterial({ color: 0x3a3e48, fog: false }),
     );
-    pole.position.set(x, 0.85, z);
+    const ground = this.game.map.tiles.surfaceAt(x, z);
+    pole.position.set(x, ground + 0.85, z);
     const bulb = new THREE.Mesh(
       new THREE.SphereGeometry(0.18, 8, 6),
       new THREE.MeshBasicMaterial({ color: 0xffe2a8, fog: false }),
     );
-    bulb.position.set(x, 1.75, z);
+    bulb.position.set(x, ground + 1.75, z);
     const pool = this.lightPool(x, z);
+    pool.position.y = ground + 0.05;
     this.scene.add(pole, bulb);
     let post: THREE.Mesh | null = null;
     const strip = this.fxStrips.lamp;
     const fr = strip?.frames[0];
     if (strip && fr && this.lampMat) {
       post = new THREE.Mesh(makeQuad(), this.lampMat);
-      post.position.set(x, 0, z);
+      post.position.set(x, ground, z);
       const height = 2.35;
       post.scale.set(height * frameAspect(strip.tex, fr), height, 1);
       pole.visible = false;
@@ -816,7 +818,7 @@ export class GameRenderer {
     const counters = [0, 0, 0, 0];
     for (const t of this.treeData) {
       const ahead = (t.x - cx) * fx + (t.z - cz) * fz;
-      this.tmpV.set(t.x, 0, t.z);
+      this.tmpV.set(t.x, this.game.map.tiles.surfaceAt(t.x, t.z), t.z);
       const shape = this.treeShape[t.variant] ?? this.treeShape[0];
       if (ahead < cut) this.tmpS.set(0, 0, 0);
       else {
@@ -846,7 +848,7 @@ export class GameRenderer {
       this.tmpQ.setFromEuler(this.shadowEuler);
       const len = t.size * cast.reach;
       const show = cast.vis > 0.04 ? 1 : 0;
-      this.tmpV.set(t.x - cast.x * len * 0.55, 0.04, t.z - cast.z * len * 0.55);
+      this.tmpV.set(t.x - cast.x * len * 0.55, this.game.map.tiles.surfaceAt(t.x, t.z) + 0.04, t.z - cast.z * len * 0.55);
       this.tmpS.set(t.size * 1.35 * soft * show, len * 1.5 * soft * show, 1);
       this.tmpMat.compose(this.tmpV, this.tmpQ, this.tmpS);
       mesh.setMatrixAt(i, this.tmpMat);

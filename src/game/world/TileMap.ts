@@ -1,3 +1,4 @@
+import { bakeGroundLift } from './groundLift';
 import { TILES, type TileChar, type TileDef } from './tiles';
 
 export class TileMap {
@@ -6,6 +7,8 @@ export class TileMap {
   private dynamicHeight: Float32Array;
   /** Upright cylinders (lamp posts) that a body cannot walk through. */
   private circles: { x: number; z: number; radius: number; height: number }[] = [];
+  /** Sculpted ground for grass, paths, flowers and the forest floor. */
+  private surface: Float32Array;
 
   constructor(
     readonly width: number,
@@ -15,6 +18,7 @@ export class TileMap {
     if (tiles.length !== width * height) throw new Error(`TileMap size mismatch ${tiles.length} != ${width * height}`);
     this.tiles = tiles;
     this.dynamicHeight = new Float32Array(width * height).fill(-1);
+    this.surface = bakeGroundLift(width, height, tiles);
   }
 
   inBounds(tx: number, tz: number): boolean {
@@ -35,9 +39,21 @@ export class TileMap {
     const tx = Math.floor(x);
     const tz = Math.floor(z);
     if (!this.inBounds(tx, tz)) return 99;
-    const dyn = this.dynamicHeight[tz * this.width + tx];
-    const base = TILES[this.tiles[tz * this.width + tx]].height;
+    const i = tz * this.width + tx;
+    const def = TILES[this.tiles[i]];
+    const dyn = this.dynamicHeight[i];
+    const base = def.height === 0 && def.render === 'ground' ? this.surface[i] : def.height;
     return dyn > base ? dyn : base;
+  }
+
+  /**
+   * Height of the ground mesh, including relief under trees and rocks.
+   * Outside the map this is the nearest edge, never the collision wall.
+   */
+  surfaceAt(x: number, z: number): number {
+    const tx = Math.min(this.width - 1, Math.max(0, Math.floor(x)));
+    const tz = Math.min(this.height - 1, Math.max(0, Math.floor(z)));
+    return this.surface[tz * this.width + tx];
   }
 
   /**

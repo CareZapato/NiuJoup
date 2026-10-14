@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CHARACTERS } from '../../game/content/characters';
 import { Panel, PixelButton, Txt } from '../components/primitives';
 import { useServices } from '../GameContext';
@@ -8,6 +9,7 @@ import { SettingsTab } from './SettingsTab';
 
 export function MainMenu() {
   const { game, saves, hasSave } = useServices();
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<'root' | 'select' | 'settings'>('root');
   const [status, setStatus] = useState<string | null>(null);
 
@@ -75,6 +77,9 @@ export function MainMenu() {
           <PixelButton small label="Volver" onPress={() => setMode('root')} />
         </Panel>
       )}
+      <Txt size={16} color={COLORS.dim} style={[styles.credit, { bottom: Math.max(10, insets.bottom + 6) }]}>
+        Carezapato - v0.1.0
+      </Txt>
     </View>
   );
 }
@@ -84,4 +89,5 @@ const styles = StyleSheet.create({
   menu: { minWidth: 300, alignItems: 'stretch', gap: 4 },
   cards: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 8 },
   card: { flexBasis: 330, flexGrow: 1, borderWidth: 1, borderColor: COLORS.borderDim, padding: 6, gap: 2 },
+  credit: { position: 'absolute', left: 0, right: 0, textAlign: 'center' },
 });

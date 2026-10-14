@@ -133,14 +133,17 @@ function sideTile(c: TileChar): number {
   }
 }
 
-/** Render height: trees/forest are drawn as billboards on flat ground. */
+/** Render height. Trees stay billboards; their floor follows the same relief as the grass. */
 function renderHeight(map: TileMap, x: number, z: number): number {
   if (!map.inBounds(x, z)) return 0;
   const c = map.charAt(x, z);
   const d = TILES[c];
   if (d.liquid) return WATER_LEVEL;
-  if (d.render === 'tree' || c === 'F' || c === '=' || c === 'H' || c === 'o') return 0;
-  return d.height;
+  if (c === 'F' || c === 'H') return 0;
+  if (c === '=') return d.height;
+  if (c === '^' || c === 'P' || c === 's') return d.height;
+  if (c === '.' || c === ',' || c === ':' || c === 'T' || c === '#' || c === 'o' || c === 'G') return map.surfaceAt(x, z);
+  return 0;
 }
 
 /**
@@ -213,9 +216,10 @@ export function buildTerrainGeometry(map: TileMap, painted = false, sand: boolea
       ];
       for (const [dx, dz, light] of sides) {
         const nh = renderHeight(map, x + dx, z + dz);
-        if (nh >= h) continue;
+        if (nh >= h - 0.02) continue;
         if (painted && (c === '^' || c === 'P')) continue;
-        const tile = painted ? (c === 's' ? 31 : 25) : TILES[c].liquid ? TILE_INDEX.path[0] : h <= 0 ? TILE_INDEX.path[1] : sideTile(c);
+        const bank = c === '.' || c === ',' || c === ':' || c === 'T' || c === '#' || c === 'o' || c === 'G';
+        const tile = bank ? topTile(map, c === 'T' || c === '#' || c === 'o' ? '.' : c, x, z, painted) : painted ? (c === 's' ? 31 : 25) : TILES[c].liquid ? TILE_INDEX.path[0] : h <= 0 ? TILE_INDEX.path[1] : sideTile(c);
         let y0 = nh;
         while (y0 < h - 1e-4) {
           const y1 = Math.min(h, Math.floor(y0 + 1 + 1e-4));

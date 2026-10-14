@@ -129,6 +129,19 @@ describe('collision', () => {
     expect(t.canOccupy(0.5, 0.5, 0, 0.3, 0.55, false)).toBe(false);
     expect(t.lineOfSight(map.start.x, map.start.z, map.start.x + 1, map.start.z, 1)).toBe(true);
     expect(t.lineOfSight(map.start.x, map.start.z, 0.5, 0.5, 1)).toBe(false);
+    expect(t.surfaceAt(7, 5.5)).toBe(0);
+    expect(t.heightAt(map.start.x, map.start.z)).toBeLessThanOrEqual(0.2);
+    const walk = new Set(['.', ',', ':']);
+    let maxStep = 0;
+    for (let z = 0; z < t.height; z++) {
+      for (let x = 0; x < t.width; x++) {
+        if (!walk.has(t.charAt(x, z))) continue;
+        const a = t.heightAt(x + 0.5, z + 0.5);
+        if (x + 1 < t.width && walk.has(t.charAt(x + 1, z))) maxStep = Math.max(maxStep, Math.abs(a - t.heightAt(x + 1.5, z + 0.5)));
+        if (z + 1 < t.height && walk.has(t.charAt(x, z + 1))) maxStep = Math.max(maxStep, Math.abs(a - t.heightAt(x + 0.5, z + 1.5)));
+      }
+    }
+    expect(maxStep).toBeLessThanOrEqual(0.21);
   });
 
   it('dynamic blockers (breakable boulders) block until cleared', () => {

@@ -220,6 +220,12 @@ Están detalladas en ARCHITECTURE.md:
 - localStorage en web y SQLite en nativo;
 - escritura verificada con backup antes de mostrar "Guardado".
 
+## Horizonte y relieve
+
+Las colinas y las montañas rodean el valle y se quedan en el mundo: al orbitar la intro ya no se deslizan sobre el pueblo. El cielo sigue a la cámara solo un poco. El suelo sube hacia riscos, meseta y bosque, baja hacia el río, y el pueblo y el patio de arena siguen planos. El desnivel entre dos casillas caminables no pasa de un paso.
+
+Verificado: `npx tsc --noEmit` y los tests de núcleo y cámara. No se abrió el navegador.
+
 ## Diálogo con retratos
 
 La conversación se abre en una barra abajo. Quien empieza (el NPC) queda a la izquierda, mirando hacia el texto. El líder que escucha queda a la derecha y su cara se espeja para mirar al otro. El que habla lleva marco dorado; el que escucha se atenúa, en expresión neutra. Las frases de Hoku, Mira y Bram ya tienen expresión. Las caras salen de `assets/generated/sprites/Nuevos/Entorno/rostros.png` (4 columnas por 6 filas: Goku, Krillin, Yamcha, Hoku, Mira y Bram; neutra, sonrisa, seria y sorpresa). El fondo negro del borde quedó transparente y el pelo negro se conservó. Hay que reiniciar Metro para que cargue el PNG nuevo.
